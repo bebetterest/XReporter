@@ -5,6 +5,7 @@ import inspect
 import json
 import os
 import random
+import sqlite3
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -28,6 +29,25 @@ EXPANSIONS = "author_id,referenced_tweets.id,referenced_tweets.id.author_id"
 
 class XApiError(RuntimeError):
     """Raised for API provider errors."""
+
+
+class ApiRequestError(XApiError):
+    """Raised for non-retriable provider HTTP errors."""
+
+    def __init__(
+        self,
+        *,
+        provider: str,
+        status_code: int,
+        path: str,
+        body: str,
+        message_prefix: str,
+    ) -> None:
+        self.provider = provider
+        self.status_code = status_code
+        self.path = path
+        self.body = body
+        super().__init__(f"{message_prefix} ({status_code}) path={path} body={body[:300]}")
 
 
 class ApiClientProtocol(Protocol):
@@ -107,8 +127,12 @@ class XApiClient:
 
             retriable = response.status_code == 429 or response.status_code >= 500
             if not retriable or attempts >= self._max_retries:
-                raise XApiError(
-                    f"X API request failed ({response.status_code}) path={path} body={response.text[:300]}"
+                raise ApiRequestError(
+                    provider="official",
+                    status_code=response.status_code,
+                    path=path,
+                    body=response.text[:2000],
+                    message_prefix="X API request failed",
                 )
 
             retry_after = response.headers.get("retry-after")
@@ -318,8 +342,12 @@ class SocialDataApiClient:
 
             retriable = response.status_code == 429 or response.status_code >= 500
             if not retriable or attempts >= self._max_retries:
-                raise XApiError(
-                    f"SocialData request failed ({response.status_code}) path={path} body={response.text[:300]}"
+                raise ApiRequestError(
+                    provider="socialdata",
+                    status_code=response.status_code,
+                    path=path,
+                    body=response.text[:2000],
+                    message_prefix="SocialData request failed",
                 )
 
             retry_after = response.headers.get("retry-after")
@@ -535,7 +563,6 @@ class TwscrapeApiClient:
             self._api = API(pool=pool)
 
         if auto_login:
-            self._validate_credentials()
             self._run_async(self._ensure_login())
 
     def close(self) -> None:
@@ -552,18 +579,14 @@ class TwscrapeApiClient:
     def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[no-untyped-def]
         self.close()
 
-    def _validate_credentials(self) -> None:
+    def _missing_credentials(self) -> list[str]:
         required = {
             "XREPORTER_TWS_USERNAME": self._username,
             "XREPORTER_TWS_PASSWORD": self._password,
             "XREPORTER_TWS_EMAIL": self._email,
             "XREPORTER_TWS_EMAIL_PASSWORD": self._email_password,
         }
-        missing = [name for name, value in required.items() if not value]
-        if missing:
-            raise ValueError(
-                "Missing twscrape credentials: " + ", ".join(missing)
-            )
+        return [name for name, value in required.items() if not value]
 
     def _run_async(self, coro: Any) -> Any:
         if not inspect.isawaitable(coro):
@@ -584,8 +607,14 @@ class TwscrapeApiClient:
         if pool is None:
             raise XApiError("twscrape API pool is unavailable")
 
+        has_existing_accounts = twscrape_accounts_db_has_account(self.accounts_db_path)
+        missing = self._missing_credentials()
+        has_full_credentials = not missing
+        if not has_existing_accounts and not has_full_credentials:
+            raise ValueError("Missing twscrape credentials: " + ", ".join(missing))
+
         add_account = getattr(pool, "add_account", None)
-        if callable(add_account):
+        if callable(add_account) and has_full_credentials:
             try:
                 await add_account(
                     self._username,
@@ -725,6 +754,23 @@ class TwscrapeApiClient:
         include_replies: bool,
     ) -> TimelinePayload:
         return self._run_async(self._collect_timeline(user, time_range, include_replies))
+
+
+def twscrape_accounts_db_has_account(accounts_db_path: Path) -> bool:
+    if not accounts_db_path.exists():
+        return False
+
+    try:
+        with sqlite3.connect(str(accounts_db_path)) as conn:
+            table = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='accounts' LIMIT 1"
+            ).fetchone()
+            if table is None:
+                return False
+            row = conn.execute("SELECT 1 FROM accounts LIMIT 1").fetchone()
+            return row is not None
+    except sqlite3.Error:
+        return False
 
 
 class FixtureXApiClient:

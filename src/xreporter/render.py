@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
 from html import escape
@@ -12,24 +11,40 @@ REPORT_TEXT = {
     "en": {
         "title": "XReporter Activity Report",
         "summary": "Run Summary",
+        "warnings": "Collection Warnings",
         "grouped": "Grouped Retweets / Quotes / Replies",
         "timeline": "Chronological Full Activity",
+        "jump_warnings": "Jump to warnings section",
         "jump_grouped": "Jump to grouped section",
         "jump_timeline": "Jump to timeline section",
+        "no_warnings": "No collection warnings recorded in this run.",
         "no_grouped": "No grouped retweet/quote/reply records in this run.",
         "generated": "Generated at",
         "actions": "actions",
+        "warning_user": "User",
+        "warning_resource": "Resource",
+        "warning_provider_status": "Provider / Status",
+        "warning_api_path": "API Path",
+        "warning_raw_error": "Raw Error",
     },
     "zh": {
         "title": "XReporter 活动报告",
         "summary": "运行摘要",
+        "warnings": "采集告警",
         "grouped": "按原帖聚合（转发 / 引用 / 回复）",
         "timeline": "完整活动时间线",
+        "jump_warnings": "跳转到告警区",
         "jump_grouped": "跳转到聚合区",
         "jump_timeline": "跳转到时间线",
+        "no_warnings": "本次运行未记录采集告警。",
         "no_grouped": "本次运行没有可聚合的转发/引用/回复记录。",
         "generated": "生成时间",
         "actions": "条动作",
+        "warning_user": "用户",
+        "warning_resource": "资源链接",
+        "warning_provider_status": "数据源 / 状态码",
+        "warning_api_path": "API 路径",
+        "warning_raw_error": "原始错误",
     },
 }
 
@@ -110,10 +125,65 @@ def _render_timeline(activities: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def _render_warnings(warnings: list[dict[str, Any]], lang: str) -> str:
+    text = REPORT_TEXT.get(lang, REPORT_TEXT["en"])
+    if not warnings:
+        return f"<p>{escape(text['no_warnings'])}</p>"
+
+    blocks: list[str] = []
+    for warning in warnings:
+        username = warning.get("username") or "unknown"
+        user_id = warning.get("user_id") or "-"
+        status_code = warning.get("status_code")
+        status = str(status_code) if status_code is not None else "-"
+        resource_url = str(warning.get("resource_url") or "").strip()
+        api_path = warning.get("api_path") or "-"
+        raw_error = warning.get("raw_error") or "-"
+        message = warning.get("message") or ""
+        provider = warning.get("provider") or "-"
+
+        resource_html = "-"
+        if resource_url:
+            resource_html = (
+                f"<a href='{escape(resource_url)}' target='_blank' rel='noopener'>{escape(resource_url)}</a>"
+            )
+
+        blocks.append(
+            """
+            <section class="warning-card">
+              <h3 class="warning-title">{message}</h3>
+              <p class="warning-line"><strong>{warning_user}:</strong> @{username} (id={user_id})</p>
+              <p class="warning-line"><strong>{warning_resource}:</strong> {resource}</p>
+              <p class="warning-line"><strong>{warning_provider_status}:</strong> {provider} / {status}</p>
+              <p class="warning-line"><strong>{warning_api_path}:</strong> {api_path}</p>
+              <p class="warning-line"><strong>{warning_raw_error}:</strong></p>
+              <pre class="warning-raw">{raw_error}</pre>
+            </section>
+            """.format(
+                message=escape(message),
+                warning_user=escape(text["warning_user"]),
+                username=escape(username),
+                user_id=escape(user_id),
+                warning_resource=escape(text["warning_resource"]),
+                resource=resource_html,
+                warning_provider_status=escape(text["warning_provider_status"]),
+                provider=escape(provider),
+                status=escape(status),
+                warning_api_path=escape(text["warning_api_path"]),
+                api_path=escape(api_path),
+                warning_raw_error=escape(text["warning_raw_error"]),
+                raw_error=escape(raw_error),
+            )
+        )
+
+    return "\n".join(blocks)
+
+
 def render_report(
     *,
     run: dict[str, Any],
     activities: list[dict[str, Any]],
+    warnings: list[dict[str, Any]] | None = None,
     output_path: Path,
     lang: str,
 ) -> Path:
@@ -144,6 +214,7 @@ def render_report(
 
     grouped_html = _render_grouped(grouped, lang)
     timeline_html = _render_timeline(activities)
+    warnings_html = _render_warnings(warnings or [], lang)
 
     generated_at = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
     html = f"""<!doctype html>
@@ -160,6 +231,9 @@ def render_report(
       --muted: #5c677d;
       --line: #dbe3f0;
       --accent: #ff7f11;
+      --danger: #b42318;
+      --danger-line: #fecaca;
+      --danger-bg: #fff1f2;
     }}
     body {{
       margin: 0;
@@ -194,6 +268,30 @@ def render_report(
       border-bottom: 1px dashed var(--line);
       padding: 12px 0;
     }}
+    .warning-card {{
+      border: 1px solid var(--danger-line);
+      background: var(--danger-bg);
+      border-radius: 12px;
+      padding: 12px;
+      margin-bottom: 12px;
+    }}
+    .warning-title {{
+      color: var(--danger);
+      margin-bottom: 8px;
+    }}
+    .warning-line {{
+      color: var(--danger);
+      margin: 6px 0;
+    }}
+    .warning-raw {{
+      color: var(--danger);
+      white-space: pre-wrap;
+      background: #ffffff;
+      border: 1px dashed var(--danger-line);
+      border-radius: 8px;
+      padding: 8px;
+      margin: 6px 0 0;
+    }}
     a {{ color: #0d5bd1; }}
     .jump a {{ margin-right: 14px; }}
   </style>
@@ -207,9 +305,15 @@ def render_report(
       <p>@{escape(run.get('username', ''))} | run_id={escape(str(run.get('id', '')))}</p>
       <p>{escape(run.get('since_utc', ''))} ~ {escape(run.get('until_utc', ''))}</p>
       <p class=\"jump\">
+        <a href=\"#warnings\">{escape(text['jump_warnings'])}</a>
         <a href=\"#grouped\">{escape(text['jump_grouped'])}</a>
         <a href=\"#timeline\">{escape(text['jump_timeline'])}</a>
       </p>
+    </section>
+
+    <section id=\"warnings\" class=\"card\">
+      <h2>{escape(text['warnings'])}</h2>
+      {warnings_html}
     </section>
 
     <section id=\"grouped\" class=\"card\">

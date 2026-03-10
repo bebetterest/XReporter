@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -187,3 +188,26 @@ def test_twscrape_requires_credentials(monkeypatch: pytest.MonkeyPatch, tmp_path
             api=_FakeTwsApi(),
             auto_login=True,
         )
+
+
+def test_twscrape_uses_existing_pool_without_email(tmp_path: Path) -> None:
+    accounts_db = tmp_path / "accounts.db"
+    with sqlite3.connect(accounts_db) as conn:
+        conn.execute("CREATE TABLE accounts (username TEXT)")
+        conn.execute("INSERT INTO accounts (username) VALUES ('existing-user')")
+        conn.commit()
+
+    api = _FakeTwsApi()
+    client = TwscrapeApiClient(
+        accounts_db_path=accounts_db,
+        username="user",
+        password="pass",
+        email="",
+        email_password="",
+        api=api,
+        auto_login=True,
+    )
+
+    assert client.get_user_by_username("demo")["id"] == "10"
+    assert api.pool.logged_in is True
+    assert api.pool.added == []

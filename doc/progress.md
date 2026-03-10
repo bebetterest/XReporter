@@ -48,9 +48,18 @@
 - Added provider-aware client factory and doctor checks:
   - fixture env still has highest priority
   - credential checks now follow selected provider
+- Improved twscrape credential behavior:
+  - if accounts DB already has accounts, doctor/collect no longer force email credentials
+  - bootstrap credentials are still required when account pool is empty
+- Added tests for twscrape existing-pool credential fallback and doctor credential status.
+- Executed full test suite in `XReporter` after twscrape credential fallback update: **31 passed**.
 - Extended `runs` schema with `api_provider` and added auto-migration for existing databases.
 - Added new tests for config compatibility, provider selection, storage migration, and new provider adapters.
-- Executed full test suite in `XReporter` environment after multi-provider changes: **29 passed**.
+- Added SocialData private-content graceful handling:
+  - when timeline fetch returns `403` privacy restriction, record run warning and continue instead of failing the full run
+  - new `run_warnings` table and render integration (red warning section with username/link/API path/raw body)
+  - added tests for service warning flow, storage warning persistence, and warning rendering
+- Executed full test suite in `XReporter` after privacy-warning update: **34 passed**.
 
 ### Pending / Next
 

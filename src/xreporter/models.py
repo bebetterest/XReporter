@@ -76,3 +76,16 @@ class CollectionRun:
     status: str
     total_followings: int
     total_activities: int
+
+
+@dataclass
+class RunWarning:
+    provider: str
+    warning_type: str
+    status_code: int | None
+    user_id: str | None
+    username: str | None
+    resource_url: str | None
+    api_path: str | None
+    message: str
+    raw_error: str | None

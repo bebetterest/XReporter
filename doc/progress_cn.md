@@ -48,9 +48,18 @@
 - 已完成 provider 感知的 client 工厂与 doctor 检查：
   - fixture 环境变量仍为最高优先级
   - 凭据检查按当前 provider 执行
+- 已改进 twscrape 凭据策略：
+  - 若账号池数据库已有账号，doctor/collect 不再强制邮箱凭据
+  - 若账号池为空，首次引导仍需完整凭据
+- 已新增 twscrape 账号池复用与 doctor 凭据判定的测试用例。
+- 已在 `XReporter` 环境执行全量测试（twscrape 凭据回退改造后）：**31 项通过**。
 - 已为 `runs` 表新增 `api_provider` 字段，并补齐已有数据库的自动迁移逻辑。
 - 已新增配置兼容、provider 选路、存储迁移、新 provider 适配层测试。
-- 已在 `XReporter` 环境执行全量测试（多 provider 改造后）：**29 项通过**。
+- 已完成 SocialData 私密内容容错改造：
+  - 时间线拉取遇到 `403` 隐私限制时，记录 run 告警并继续采集，不再整次失败
+  - 新增 `run_warnings` 表，并接入报告红色告警区（用户名/链接/API 路径/原始错误体）
+  - 新增服务层告警流程、告警持久化、告警渲染测试
+- 已在 `XReporter` 环境执行全量测试（隐私告警改造后）：**34 项通过**。
 
 ### 待办 / 下一步
 

@@ -21,6 +21,7 @@ XReporter is a CLI-first tool that collects activities from followings of a targ
 - Time range support: `12h`, `24h`, or custom absolute range.
 - Activity types: `tweet`, `retweet`, `quote`, `reply`.
 - Grouping: retweet/quote/reply grouped by original tweet.
+- SocialData privacy handling: timeline `403` privacy errors are recorded as run warnings and skipped (collection continues).
 - i18n: English + Chinese, auto locale detection; fallback to English if locale is not Chinese/English.
 - Progress visualization using Rich task bars.
 
@@ -51,7 +52,7 @@ export X_BEARER_TOKEN="<your_token>"
 # socialdata
 export SOCIALDATA_API_KEY="<your_socialdata_api_key>"
 
-# twscrape (single account v1)
+# twscrape bootstrap (required when account pool is empty)
 export XREPORTER_TWS_USERNAME="<x_username>"
 export XREPORTER_TWS_PASSWORD="<x_password>"
 export XREPORTER_TWS_EMAIL="<email_for_verification>"
@@ -59,6 +60,11 @@ export XREPORTER_TWS_EMAIL_PASSWORD="<email_password>"
 ```
 
 XReporter never writes credentials into config files.
+
+For `twscrape`, credential requirements depend on the account pool state:
+
+- If `twscrape_accounts_db_path` has no account yet, all 4 `XREPORTER_TWS_*` variables are required.
+- If the account pool already contains at least one account, XReporter will reuse that pool and email credentials are optional.
 
 ## Quick Start
 
@@ -88,6 +94,44 @@ xreporter render --latest
 ```bash
 xreporter doctor
 ```
+
+## twscrape Usage Guide
+
+### First-time bootstrap (empty account pool)
+
+1. Set full twscrape credentials:
+
+```bash
+export XREPORTER_TWS_USERNAME="<x_username>"
+export XREPORTER_TWS_PASSWORD="<x_password>"
+export XREPORTER_TWS_EMAIL="<email_for_verification>"
+export XREPORTER_TWS_EMAIL_PASSWORD="<email_password>"
+```
+
+2. Initialize config with provider and account DB path:
+
+```bash
+xreporter config init \
+  --username target_user \
+  --api-provider twscrape \
+  --twscrape-accounts-db-path ~/.xreporter/twscrape_accounts.db
+```
+
+3. Verify and run:
+
+```bash
+xreporter doctor
+xreporter collect --last 24h
+xreporter render --latest
+```
+
+### Reuse existing account pool
+
+When `~/.xreporter/twscrape_accounts.db` (or your configured path) already has account records:
+
+- You can run `collect` and `doctor` without forcing email credentials.
+- XReporter will skip account bootstrap and call `login_all` on existing pool accounts.
+- If the pool is actually empty, collection still fails with missing credential errors, which means bootstrap credentials are still needed once.
 
 ## Configuration
 
@@ -140,5 +184,6 @@ Covered in tests:
 
 - X API access level controls practical coverage and rate limits.
 - Provider can be switched in config without changing downstream normalization/storage/rendering.
+- Rendered report includes a warning section (red highlight) with raw provider error details (username/link/API path/error body).
 - For large following lists, tune `--following-cap` based on API quota.
 - This repository keeps English and Chinese docs in sync (`*_cn.md`).

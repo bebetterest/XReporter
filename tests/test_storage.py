@@ -1,7 +1,7 @@
 import sqlite3
 from datetime import datetime, timezone
 
-from xreporter.models import ActivityRecord, ActivityType, TimeRange, TweetRecord, UserRecord
+from xreporter.models import ActivityRecord, ActivityType, RunWarning, TimeRange, TweetRecord, UserRecord
 from xreporter.normalizer import NormalizedBatch
 from xreporter.storage import SQLiteStorage
 
@@ -78,6 +78,7 @@ def test_upsert_and_run_activity_idempotency(tmp_path) -> None:
     assert storage.count_rows("tweets") == 1
     assert storage.count_rows("activities") == 1
     assert storage.count_rows("run_activities") == 2
+    assert storage.count_rows("run_warnings") == 0
 
     storage.close()
 
@@ -129,4 +130,48 @@ def test_runs_table_migrates_api_provider_column(tmp_path) -> None:
     row = storage.get_run(run_id)
     assert row is not None
     assert row["api_provider"] == "socialdata"
+    storage.close()
+
+
+def test_run_warnings_persist_and_query(tmp_path) -> None:
+    db_path = tmp_path / "xreporter.db"
+    storage = SQLiteStorage(db_path)
+    storage.init_schema()
+
+    time_range = TimeRange(
+        since=datetime(2026, 3, 10, 0, 0, tzinfo=timezone.utc),
+        until=datetime(2026, 3, 10, 2, 0, tzinfo=timezone.utc),
+    )
+    run_id = storage.create_run(
+        username="target",
+        target_user_id="100",
+        api_provider="socialdata",
+        time_range=time_range,
+        include_replies=True,
+        following_cap=10,
+    )
+
+    storage.add_run_warning(
+        run_id,
+        RunWarning(
+            provider="socialdata",
+            warning_type="private_content_403",
+            status_code=403,
+            user_id="200",
+            username="alice",
+            resource_url="https://x.com/alice",
+            api_path="/twitter/user/200/tweets-and-replies",
+            message="Skipped private content due to SocialData privacy restriction.",
+            raw_error='{"status":"error","message":"Forbidden"}',
+        ),
+    )
+    storage.finish_run(run_id=run_id, status="success", total_followings=1, total_activities=0)
+
+    warnings = storage.get_warnings_for_run(run_id)
+    assert len(warnings) == 1
+    assert warnings[0]["warning_type"] == "private_content_403"
+    assert warnings[0]["status_code"] == 403
+    assert warnings[0]["username"] == "alice"
+    assert storage.count_rows("run_warnings") == 1
+
     storage.close()

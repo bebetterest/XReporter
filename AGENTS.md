@@ -14,8 +14,8 @@ This file defines the working principles for humans and agents in this repositor
 - Keep modules focused:
   - `x_api.py`: multi-provider API access, mapping, and retry behavior
   - `normalizer.py`: activity normalization
-  - `storage.py`: persistence and idempotency
-  - `render.py`: report generation
+  - `storage.py`: persistence, idempotency, and run-level warning records
+  - `render.py`: report generation (timeline/grouping/warning sections)
   - `cli.py`: command interface and orchestration
 - Use typed Python and explicit data contracts where practical.
 - Avoid hidden global state; pass dependencies through constructors/functions.
@@ -50,6 +50,7 @@ This file defines the working principles for humans and agents in this repositor
 - Never persist `X_BEARER_TOKEN` in project files.
 - Never persist `SOCIALDATA_API_KEY` in project files.
 - Never persist `XREPORTER_TWS_*` credentials in project files.
+- Twscrape bootstrap requires full `XREPORTER_TWS_*` credentials when account pool is empty; existing account pools can run without forcing email credentials.
 - Use environment variables for secrets.
 - Keep fixture files free of real credentials.
 

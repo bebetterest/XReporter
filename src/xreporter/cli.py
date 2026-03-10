@@ -26,7 +26,14 @@ from xreporter.render import render_report
 from xreporter.service import CollectorService
 from xreporter.storage import SQLiteStorage
 from xreporter.time_range import TimeRangeError, parse_time_range
-from xreporter.x_api import FixtureXApiClient, SocialDataApiClient, TwscrapeApiClient, XApiClient, XApiError
+from xreporter.x_api import (
+    FixtureXApiClient,
+    SocialDataApiClient,
+    TwscrapeApiClient,
+    XApiClient,
+    XApiError,
+    twscrape_accounts_db_has_account,
+)
 
 
 app = typer.Typer(help="XReporter CLI")
@@ -73,7 +80,12 @@ def _build_api_client(cfg: AppConfig) -> tuple[str, object]:
     raise typer.BadParameter(f"Unsupported api_provider: {cfg.api_provider}")
 
 
-def _provider_credential_status(provider: str, fixture_mode: bool) -> tuple[bool, str]:
+def _provider_credential_status(
+    provider: str,
+    fixture_mode: bool,
+    *,
+    twscrape_accounts_db_path: Path | None = None,
+) -> tuple[bool, str]:
     if fixture_mode:
         return True, "fixture override"
 
@@ -93,9 +105,14 @@ def _provider_credential_status(provider: str, fixture_mode: bool) -> tuple[bool
             "XREPORTER_TWS_EMAIL_PASSWORD": os.getenv("XREPORTER_TWS_EMAIL_PASSWORD"),
         }
         missing = [name for name, value in required.items() if not value]
+        if not missing:
+            return True, "all twscrape credentials set"
+
+        if twscrape_accounts_db_path and twscrape_accounts_db_has_account(twscrape_accounts_db_path):
+            return True, f"existing account pool: {twscrape_accounts_db_path}"
+
         if missing:
             return False, f"missing: {', '.join(missing)}"
-        return True, "all twscrape credentials set"
 
     return False, f"unknown provider: {provider}"
 
@@ -213,6 +230,8 @@ def collect(
                 close()
 
     console.print(tr(language, "collect_success", run_id=result.run_id, activities=result.total_activities))
+    if result.total_warnings > 0:
+        console.print(tr(language, "collect_warnings", warnings=result.total_warnings))
 
 
 @app.command("render")
@@ -241,12 +260,19 @@ def render(
             raise typer.Exit(code=1)
 
         activities = storage.get_activities_for_run(selected_run_id)
+        warnings = storage.get_warnings_for_run(selected_run_id)
         default_output = Path(cfg.report_dir) / f"run_{selected_run_id}.html"
         output_path = output or default_output
 
         with _progress() as progress:
             task = progress.add_task(tr(language, "progress_render"), total=1)
-            result_path = render_report(run=run, activities=activities, output_path=output_path, lang=language)
+            result_path = render_report(
+                run=run,
+                activities=activities,
+                warnings=warnings,
+                output_path=output_path,
+                lang=language,
+            )
             progress.advance(task)
 
     console.print(tr(language, "render_success", path=result_path))
@@ -267,7 +293,11 @@ def doctor() -> None:
 
     fixture_mode = bool(os.getenv("XREPORTER_FIXTURE_FILE"))
     provider = cfg.api_provider if cfg else "official"
-    credential_ok, credential_detail = _provider_credential_status(provider, fixture_mode)
+    credential_ok, credential_detail = _provider_credential_status(
+        provider,
+        fixture_mode,
+        twscrape_accounts_db_path=Path(cfg.twscrape_accounts_db_path) if cfg else None,
+    )
 
     db_ok = False
     db_message = ""

@@ -1,10 +1,11 @@
+import sqlite3
 from pathlib import Path
 from typing import cast
 
 import pytest
 import typer
 
-from xreporter.cli import _build_api_client
+from xreporter.cli import _build_api_client, _provider_credential_status
 from xreporter.config import APIProvider, AppConfig
 
 
@@ -87,3 +88,26 @@ def test_build_official_provider_requires_token(monkeypatch: pytest.MonkeyPatch,
 
     with pytest.raises(typer.BadParameter, match="X_BEARER_TOKEN"):
         _build_api_client(_cfg(tmp_path, "official"))
+
+
+def test_twscrape_credential_status_allows_existing_pool_without_email(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    accounts_db = tmp_path / "accounts.db"
+    with sqlite3.connect(accounts_db) as conn:
+        conn.execute("CREATE TABLE accounts (username TEXT)")
+        conn.execute("INSERT INTO accounts (username) VALUES ('existing-user')")
+        conn.commit()
+
+    monkeypatch.setenv("XREPORTER_TWS_USERNAME", "user")
+    monkeypatch.setenv("XREPORTER_TWS_PASSWORD", "pass")
+    monkeypatch.delenv("XREPORTER_TWS_EMAIL", raising=False)
+    monkeypatch.delenv("XREPORTER_TWS_EMAIL_PASSWORD", raising=False)
+
+    ok, detail = _provider_credential_status(
+        "twscrape",
+        False,
+        twscrape_accounts_db_path=accounts_db,
+    )
+    assert ok is True
+    assert "existing account pool" in detail

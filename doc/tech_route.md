@@ -26,13 +26,16 @@ CLI (Typer + Rich)
 - `activities`: normalized activity rows (`tweet|retweet|quote|reply`)
 - `runs`: collection run metadata and status
 - `run_activities`: run-to-activity mapping for reproducibility
+- `run_warnings`: non-fatal collection warnings (provider/status/user/link/raw error)
 
 ## Collection Flow
 
 1. Select API provider from config (`api_provider`), with fixture env override.
+   - Twscrape auth policy: if `twscrape_accounts_db_path` already has accounts, reuse pool login; otherwise bootstrap requires full `XREPORTER_TWS_*` credentials.
 2. Resolve target user by username.
 3. Fetch followings with pagination and cap.
 4. Fetch each following's timeline in selected range.
+   - For SocialData `403` privacy-restricted responses, record warning and continue.
 5. Fetch unresolved referenced tweets by IDs.
 6. Normalize events into activity records.
 7. Upsert users/tweets/activities, attach to run.
@@ -43,7 +46,7 @@ CLI (Typer + Rich)
 1. Select run (`--run-id` or latest).
 2. Load run-linked activities.
 3. Group retweet/quote/reply by `original_tweet_id`.
-4. Render single static HTML with grouped section + chronological timeline.
+4. Render single static HTML with warning section + grouped section + chronological timeline.
 
 ## i18n Rules
 
@@ -55,6 +58,7 @@ CLI (Typer + Rich)
 
 - API retry policy on `429` and `5xx` with exponential backoff + jitter.
 - SocialData adapter reuses retry policy on `429/5xx`.
+- SocialData `403` privacy errors are downgraded to run warnings (not fatal for the whole run).
 - Failure during collection marks run as `failed` with error message.
 - Upsert strategy ensures deduplication across reruns.
 

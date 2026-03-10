@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from xreporter.models import ActivityRecord, TimeRange, TweetRecord, UserRecord
+from xreporter.models import ActivityRecord, RunWarning, TimeRange, TweetRecord, UserRecord
 from xreporter.normalizer import NormalizedBatch
 
 
@@ -121,8 +121,25 @@ class SQLiteStorage:
                 FOREIGN KEY (activity_id) REFERENCES activities(id)
             );
 
+            CREATE TABLE IF NOT EXISTS run_warnings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id INTEGER NOT NULL,
+                provider TEXT NOT NULL,
+                warning_type TEXT NOT NULL,
+                status_code INTEGER,
+                user_id TEXT,
+                username TEXT,
+                resource_url TEXT,
+                api_path TEXT,
+                message TEXT NOT NULL,
+                raw_error TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (run_id) REFERENCES runs(id)
+            );
+
             CREATE INDEX IF NOT EXISTS idx_activities_event_created_at ON activities(event_created_at);
             CREATE INDEX IF NOT EXISTS idx_run_activities_run_id ON run_activities(run_id);
+            CREATE INDEX IF NOT EXISTS idx_run_warnings_run_id ON run_warnings(run_id);
             """
         )
         if not self._column_exists("runs", "api_provider"):
@@ -362,6 +379,38 @@ class SQLiteStorage:
             (run_id, activity_id),
         )
 
+    def add_run_warning(self, run_id: int, warning: RunWarning) -> None:
+        self._conn.execute(
+            """
+            INSERT INTO run_warnings (
+                run_id,
+                provider,
+                warning_type,
+                status_code,
+                user_id,
+                username,
+                resource_url,
+                api_path,
+                message,
+                raw_error,
+                created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                run_id,
+                warning.provider,
+                warning.warning_type,
+                warning.status_code,
+                warning.user_id,
+                warning.username,
+                warning.resource_url,
+                warning.api_path,
+                warning.message,
+                warning.raw_error,
+                self._utc_now_str(),
+            ),
+        )
+
     def persist_batch(self, run_id: int, batch: NormalizedBatch) -> None:
         with self._conn:
             for user in batch.users.values():
@@ -404,6 +453,18 @@ class SQLiteStorage:
         ).fetchall()
         return [dict(row) for row in rows]
 
+    def get_warnings_for_run(self, run_id: int) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            """
+            SELECT *
+            FROM run_warnings
+            WHERE run_id = ?
+            ORDER BY id ASC
+            """,
+            (run_id,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
     def count_rows(self, table: str) -> int:
         if table not in {
             "users",
@@ -412,6 +473,7 @@ class SQLiteStorage:
             "activities",
             "runs",
             "run_activities",
+            "run_warnings",
         }:
             raise ValueError("Unsupported table name")
         row = self._conn.execute(f"SELECT COUNT(*) AS c FROM {table}").fetchone()

@@ -14,8 +14,8 @@
 - 模块职责聚焦：
   - `x_api.py`：多 provider API 访问、数据映射与重试策略
   - `normalizer.py`：活动归一化
-  - `storage.py`：持久化与幂等
-  - `render.py`：报告生成
+  - `storage.py`：持久化、幂等与 run 级告警记录
+  - `render.py`：报告生成（时间线/聚合/告警分区）
   - `cli.py`：命令接口与编排
 - 尽量使用类型标注和明确的数据契约。
 - 避免隐藏全局状态，通过构造参数/函数参数传递依赖。
@@ -50,6 +50,7 @@
 - 严禁将 `X_BEARER_TOKEN` 持久化到项目文件。
 - 严禁将 `SOCIALDATA_API_KEY` 持久化到项目文件。
 - 严禁将 `XREPORTER_TWS_*` 凭据持久化到项目文件。
+- Twscrape 在账号池为空时首次引导需完整 `XREPORTER_TWS_*` 凭据；若账号池已有账号，则不强制邮箱凭据。
 - 使用环境变量管理密钥。
 - fixture 文件不得包含真实凭据。
 
