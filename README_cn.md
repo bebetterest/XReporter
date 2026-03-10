@@ -1,49 +1,41 @@
 # XReporter
 
-XReporter 是一个以 CLI 为核心的工具：在设定时间窗口内采集目标 X.com 用户关注列表中的活动数据，归一化存入 SQLite，并渲染为静态 HTML 报告，便于查看和跳转原帖。
+> 重要说明：
+>
+> - 使用 X 官方 API 的真实成本通常较高（价格与配额很容易成为瓶颈）。
+> - 仓库中已经实现 SocialData provider 适配与测试，但尚未完成完整实网验证。
 
-## 当前版本
+XReporter 是一个以 CLI 为核心的数据管线工具，负责：
 
-- 版本：`0.1.0`（MVI）
-- 已实现主链路：`config -> collect -> sqlite -> render`
-- API 模式：通过配置切换多来源（`official`、`socialdata`）
-- 离线演示/测试模式：通过 `XREPORTER_FIXTURE_FILE` 使用固定数据
+- 在指定时间窗口采集目标 X 用户关注列表中的活动；
+- 将数据归一化后写入 SQLite（支持重复运行去重）；
+- 渲染为静态 HTML 报告，便于浏览和跳转原帖。
 
-## 功能（v0.1）
+当前版本：`0.1.0`（MVI），可运行主链路为 `config -> collect -> sqlite -> render`。
 
-- CLI 命令：
-1. `xreporter config init --username <name> [--lang auto|en|zh] [--db-path <path>] [--report-dir <path>] [--following-cap <int>]`
-   - provider 选项：`[--api-provider official|socialdata]`
-2. `xreporter config show`
-3. `xreporter collect [--username <name>] [--last 12h|24h | --since <ISO8601> --until <ISO8601>] [--following-cap <int>] [--include-replies/--no-include-replies]`
-4. `xreporter render [--run-id <id> | --latest] [--output <html_path>]`
-5. `xreporter doctor`
-- 时间范围支持：`12h`、`24h`、自定义绝对时间范围。
-- 活动类型：`tweet`、`retweet`、`quote`、`reply`。
-- 聚合能力：按原帖对转发/引用/回复进行聚合。
-- SocialData 私密内容处理：时间线遇到 `403` 隐私限制时会记录为运行告警并跳过，采集继续执行。
-- i18n：中英文界面，支持自动语言识别；若本地语言不是中/英文则回退英文。
-- 使用 Rich 任务条显示进度。
+## 能做什么
 
-## 环境搭建（Conda）
+- 多 provider 采集：`official` / `socialdata`（配置切换）。
+- 时间范围：`--last 12h|24h` 或绝对时间 `--since/--until`（ISO8601）。
+- 活动归一化：`tweet`、`retweet`、`quote`、`reply`。
+- 报告支持按原帖聚合 + 按时间线浏览。
+- 支持将 provider 的部分失败记录为运行告警（`run_warnings`）。
+- CLI 支持中英文与自动语言（`en`、`zh`、`auto`）。
+- 支持 `XREPORTER_FIXTURE_FILE` 离线演示/测试模式。
 
-使用名为 `XReporter` 的 conda 环境。
+## 3 分钟上手
+
+### 1）准备环境
+
+使用 conda 环境 `XReporter`：
 
 ```bash
 conda env create -f environment.yml
 conda activate XReporter
-```
-
-如果环境已存在：
-
-```bash
-conda activate XReporter
 pip install -e .[dev]
 ```
 
-## 凭据
-
-各 provider 凭据（仅环境变量）：
+### 2）配置凭据（仅环境变量）
 
 ```bash
 # official
@@ -53,44 +45,59 @@ export X_BEARER_TOKEN="<your_token>"
 export SOCIALDATA_API_KEY="<your_socialdata_api_key>"
 ```
 
-XReporter 不会将凭据写入配置文件。
+XReporter 不会把凭据写入项目配置文件。
 
-## 快速开始
-
-1. 初始化配置：
+### 3）初始化配置
 
 ```bash
 xreporter config init --username target_user --lang auto
-# 新建配置默认 api_provider=official
+# 新建配置默认 provider=official
 ```
 
-2. 采集数据：
+### 4）采集并渲染
 
 ```bash
 xreporter collect --last 24h
-# 或
-xreporter collect --since 2026-03-09T00:00:00+08:00 --until 2026-03-10T00:00:00+08:00
-```
-
-3. 渲染报告：
-
-```bash
 xreporter render --latest
 ```
 
-4. 健康检查：
+### 5）健康检查
 
 ```bash
 xreporter doctor
 ```
 
-## 配置项
+## CLI 命令
+
+1. `xreporter config init --username <name> [--lang auto|en|zh] [--db-path <path>] [--report-dir <path>] [--following-cap <int>] [--include-replies/--no-include-replies] [--api-provider official|socialdata]`
+2. `xreporter config show`
+3. `xreporter collect [--username <name>] [--last 12h|24h | --since <ISO8601> --until <ISO8601>] [--following-cap <int>] [--include-replies/--no-include-replies]`
+4. `xreporter render [--run-id <id> | --latest] [--output <html_path>]`
+5. `xreporter doctor`
+
+## 典型工作流
+
+```bash
+# 1) 初始化（一次）
+xreporter config init --username jack --lang auto --following-cap 200
+
+# 2) 采集一个时间窗口
+xreporter collect --last 24h
+
+# 3) 渲染最新一次运行
+xreporter render --latest
+
+# 4) 或渲染指定运行
+xreporter render --run-id 3 --output ./reports/manual_run_3.html
+```
+
+## 配置说明
 
 默认配置路径：
 
 - `~/.xreporter/config.toml`
 
-配置结构：
+字段说明：
 
 - `username`（字符串）
 - `language`（`auto|en|zh`）
@@ -100,40 +107,77 @@ xreporter doctor
 - `include_replies_default`（布尔，默认 `true`）
 - `api_provider`（`official|socialdata`；旧配置缺失该字段时默认 `official`）
 
-## 项目结构
+## Provider 说明
+
+- `official`：
+  - 与 X 官方 API 结构最对齐；
+  - 需要 `X_BEARER_TOKEN`；
+  - 成本与速率限制压力可能较大（取决于权限等级与调用量）。
+- `socialdata`：
+  - 需要 `SOCIALDATA_API_KEY`；
+  - 适配器已实现多端点回退和字段归一化；
+  - 时间线 `403` 隐私限制会记录告警并跳过；
+  - 本仓库内完整生产验证状态：待完成。
+- `fixture`：
+  - 设置 `XREPORTER_FIXTURE_FILE` 后可离线跑通演示/测试。
+
+## 输出与数据模型
+
+- SQLite 核心表：
+  - `users`、`tweets`、`tweet_links`、`activities`
+  - `runs`、`run_activities`、`run_warnings`
+- HTML 报告包含：
+  - 告警区（provider/用户/API 路径/原始错误）
+  - 按原帖聚合的转发/引用/回复区
+  - 按时间排序的活动时间线
+
+## 架构概览
+
+```text
+CLI (Typer + Rich)
+  -> Config + i18n
+  -> CollectorService
+       -> provider adapter (XApiClient / SocialDataApiClient / FixtureXApiClient)
+       -> normalizer
+       -> SQLiteStorage
+  -> HTML renderer
+```
+
+代码结构：
 
 ```text
 src/xreporter/
-  cli.py
-  config.py
-  i18n.py
-  models.py
-  normalizer.py
-  render.py
-  service.py
-  storage.py
-  time_range.py
-  x_api.py
+  cli.py        # 命令入口与编排
+  config.py     # 配置读写与默认路径
+  i18n.py       # 语言解析与文案
+  models.py     # 类型化数据模型
+  normalizer.py # 原始 payload -> 归一化 batch
+  service.py    # 采集流程与告警处理
+  storage.py    # SQLite schema/upsert/run 元数据
+  render.py     # 静态 HTML 渲染
+  time_range.py # 时间参数解析
+  x_api.py      # official/socialdata/fixture 客户端
 tests/
 doc/
 ```
 
-## 测试
+## 开发与测试
+
+运行测试：
 
 ```bash
+conda activate XReporter
 pytest
 ```
 
-测试覆盖：
+当前测试重点：
 
-- 单元测试：时间解析、i18n 回退、活动分类、SQLite 幂等性
-- 集成测试：分页、429 重试、缺失引用帖回补
-- 端到端测试：fixture `collect -> render`、重复采集幂等、中英文切换
+- 单元：时间解析、i18n 回退、活动分类、SQLite 幂等
+- 集成：分页、`429/5xx` 重试、缺失引用帖补拉
+- 端到端：fixture `collect -> render`、重复运行幂等、中英文 CLI 行为
 
-## 说明
+## 相关文档
 
-- X API 权限等级会影响可采集范围和速率限制。
-- 可在配置中切换 provider，归一化/存储/渲染链路无需改动。
-- 报告新增红色告警区，展示原始 provider 错误信息（用户名/链接/API 路径/错误体）。
-- 关注列表较大时，应结合 API 配额调整 `--following-cap`。
 - 仓库遵循中英文文档同步（`*_cn.md`）。
+- 技术路线：`doc/tech_route.md` / `doc/tech_route_cn.md`
+- 进度记录：`doc/progress.md` / `doc/progress_cn.md`

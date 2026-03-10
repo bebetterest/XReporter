@@ -1,49 +1,41 @@
 # XReporter
 
-XReporter is a CLI-first tool that collects activities from followings of a target X.com user within a selected time window, stores normalized data in SQLite, and renders a static HTML report for review and jump-to-post navigation.
+> Important:
+>
+> - Using the official X API can be expensive in real-world usage (pricing and quota can become a bottleneck quickly).
+> - The SocialData provider integration exists in code/tests, but it has **not** completed full real-world validation in this repository yet.
 
-## Current Version
+XReporter is a CLI-first pipeline that:
 
-- Version: `0.1.0` (MVI)
-- Implemented pipeline: `config -> collect -> sqlite -> render`
-- API mode: multi-provider (`official`, `socialdata`) via config switch
-- Offline demo/test mode: fixture API file via `XREPORTER_FIXTURE_FILE`
+- collects activity from followings of a target X user in a selected time window,
+- normalizes and stores data in SQLite with rerun-safe upsert behavior,
+- renders a static HTML report for review and jump-to-post navigation.
 
-## Features (v0.1)
+Current version: `0.1.0` (MVI), with runnable path `config -> collect -> sqlite -> render`.
 
-- CLI commands:
-1. `xreporter config init --username <name> [--lang auto|en|zh] [--db-path <path>] [--report-dir <path>] [--following-cap <int>]`
-   - provider option: `[--api-provider official|socialdata]`
-2. `xreporter config show`
-3. `xreporter collect [--username <name>] [--last 12h|24h | --since <ISO8601> --until <ISO8601>] [--following-cap <int>] [--include-replies/--no-include-replies]`
-4. `xreporter render [--run-id <id> | --latest] [--output <html_path>]`
-5. `xreporter doctor`
-- Time range support: `12h`, `24h`, or custom absolute range.
-- Activity types: `tweet`, `retweet`, `quote`, `reply`.
-- Grouping: retweet/quote/reply grouped by original tweet.
-- SocialData privacy handling: timeline `403` privacy errors are recorded as run warnings and skipped (collection continues).
-- i18n: English + Chinese, auto locale detection; fallback to English if locale is not Chinese/English.
-- Progress visualization using Rich task bars.
+## What It Can Do
 
-## Environment Setup (Conda)
+- Multi-provider collection: `official` / `socialdata` (switch by config).
+- Time range modes: `--last 12h|24h` or absolute `--since/--until` (ISO8601).
+- Activity normalization: `tweet`, `retweet`, `quote`, `reply`.
+- Grouped report sections by original tweet + chronological timeline.
+- Non-fatal warning records (`run_warnings`) for provider-level partial failures.
+- i18n CLI output (`en`, `zh`, `auto`) with locale fallback to English.
+- Offline fixture mode with `XREPORTER_FIXTURE_FILE`.
 
-Use a conda environment named `XReporter`.
+## Quick Start (3 Minutes)
+
+### 1) Setup environment
+
+Use conda env `XReporter`:
 
 ```bash
 conda env create -f environment.yml
 conda activate XReporter
-```
-
-If the environment already exists:
-
-```bash
-conda activate XReporter
 pip install -e .[dev]
 ```
 
-## Credentials
-
-Provider credentials (env only):
+### 2) Configure credentials (env only)
 
 ```bash
 # official
@@ -53,44 +45,59 @@ export X_BEARER_TOKEN="<your_token>"
 export SOCIALDATA_API_KEY="<your_socialdata_api_key>"
 ```
 
-XReporter never writes credentials into config files.
+XReporter never writes credentials into project config files.
 
-## Quick Start
-
-1. Initialize config:
+### 3) Initialize config
 
 ```bash
 xreporter config init --username target_user --lang auto
-# default api_provider is official for new configs
+# default provider for new config: official
 ```
 
-2. Run collection:
+### 4) Collect + render
 
 ```bash
 xreporter collect --last 24h
-# or
-xreporter collect --since 2026-03-09T00:00:00+08:00 --until 2026-03-10T00:00:00+08:00
-```
-
-3. Render report:
-
-```bash
 xreporter render --latest
 ```
 
-4. Health check:
+### 5) Run health check
 
 ```bash
 xreporter doctor
 ```
 
-## Configuration
+## CLI Commands
 
-Default config file path:
+1. `xreporter config init --username <name> [--lang auto|en|zh] [--db-path <path>] [--report-dir <path>] [--following-cap <int>] [--include-replies/--no-include-replies] [--api-provider official|socialdata]`
+2. `xreporter config show`
+3. `xreporter collect [--username <name>] [--last 12h|24h | --since <ISO8601> --until <ISO8601>] [--following-cap <int>] [--include-replies/--no-include-replies]`
+4. `xreporter render [--run-id <id> | --latest] [--output <html_path>]`
+5. `xreporter doctor`
+
+## Typical Workflow
+
+```bash
+# 1) init once
+xreporter config init --username jack --lang auto --following-cap 200
+
+# 2) collect one window
+xreporter collect --last 24h
+
+# 3) render latest run
+xreporter render --latest
+
+# 4) or render a specific run
+xreporter render --run-id 3 --output ./reports/manual_run_3.html
+```
+
+## Config Reference
+
+Default config path:
 
 - `~/.xreporter/config.toml`
 
-Config schema:
+Config fields:
 
 - `username` (string)
 - `language` (`auto|en|zh`)
@@ -98,42 +105,79 @@ Config schema:
 - `report_dir` (string)
 - `following_cap_default` (int, default `200`)
 - `include_replies_default` (bool, default `true`)
-- `api_provider` (`official|socialdata`; legacy config without this field defaults to `official`)
+- `api_provider` (`official|socialdata`; missing legacy field defaults to `official`)
 
-## Project Structure
+## Provider Notes
+
+- `official`:
+  - Better aligned with canonical X API schema.
+  - Requires `X_BEARER_TOKEN`.
+  - Cost/rate-limit pressure can be high depending on access tier and usage.
+- `socialdata`:
+  - Requires `SOCIALDATA_API_KEY`.
+  - Adapter handles endpoint fallbacks and schema normalization.
+  - Timeline `403` privacy responses are recorded as warnings and skipped.
+  - Full production validation status in this repo: pending.
+- `fixture`:
+  - Set `XREPORTER_FIXTURE_FILE` to run offline demo/tests without real API calls.
+
+## Output and Data Model
+
+- SQLite core tables:
+  - `users`, `tweets`, `tweet_links`, `activities`
+  - `runs`, `run_activities`, `run_warnings`
+- HTML report:
+  - warning section (provider/user/API path/raw error)
+  - grouped retweet/quote/reply by original post
+  - chronological timeline for browsing
+
+## Architecture
+
+```text
+CLI (Typer + Rich)
+  -> Config + i18n
+  -> CollectorService
+       -> provider adapter (XApiClient / SocialDataApiClient / FixtureXApiClient)
+       -> normalizer
+       -> SQLiteStorage
+  -> HTML renderer
+```
+
+Code layout:
 
 ```text
 src/xreporter/
-  cli.py
-  config.py
-  i18n.py
-  models.py
-  normalizer.py
-  render.py
-  service.py
-  storage.py
-  time_range.py
-  x_api.py
+  cli.py        # command interface and orchestration
+  config.py     # config load/save/default paths
+  i18n.py       # language resolution and message catalog
+  models.py     # typed data contracts
+  normalizer.py # payload -> normalized batch
+  service.py    # collect workflow and warning handling
+  storage.py    # SQLite schema, upsert, run metadata
+  render.py     # static HTML generation
+  time_range.py # last/since/until parsing
+  x_api.py      # official/socialdata/fixture clients
 tests/
 doc/
 ```
 
-## Testing
+## Development and Testing
+
+Run tests:
 
 ```bash
+conda activate XReporter
 pytest
 ```
 
-Covered in tests:
+Current coverage focus:
 
 - unit: time range parsing, i18n fallback, activity classification, SQLite idempotency
-- integration: API pagination, retry on 429, unresolved referenced tweet fetch
-- end-to-end: fixture `collect -> render`, rerun idempotency, bilingual CLI switch
+- integration: pagination, retry on `429/5xx`, unresolved referenced tweet fetch
+- e2e: fixture `collect -> render`, rerun idempotency, bilingual CLI behavior
 
-## Notes
+## Docs
 
-- X API access level controls practical coverage and rate limits.
-- Provider can be switched in config without changing downstream normalization/storage/rendering.
-- Rendered report includes a warning section (red highlight) with raw provider error details (username/link/API path/error body).
-- For large following lists, tune `--following-cap` based on API quota.
-- This repository keeps English and Chinese docs in sync (`*_cn.md`).
+- English/Chinese docs are maintained in sync (`*_cn.md`).
+- Technical route: `doc/tech_route.md` / `doc/tech_route_cn.md`
+- Progress log: `doc/progress.md` / `doc/progress_cn.md`
