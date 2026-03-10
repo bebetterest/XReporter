@@ -17,7 +17,6 @@ from xreporter.config import (
     default_config_path,
     default_db_path,
     default_report_dir,
-    default_twscrape_accounts_db_path,
     load_config,
     save_config,
 )
@@ -29,10 +28,8 @@ from xreporter.time_range import TimeRangeError, parse_time_range
 from xreporter.x_api import (
     FixtureXApiClient,
     SocialDataApiClient,
-    TwscrapeApiClient,
     XApiClient,
     XApiError,
-    twscrape_accounts_db_has_account,
 )
 
 
@@ -71,20 +68,12 @@ def _build_api_client(cfg: AppConfig) -> tuple[str, object]:
             raise typer.BadParameter("SOCIALDATA_API_KEY is required for provider=socialdata.")
         return "socialdata", SocialDataApiClient(token=token)
 
-    if cfg.api_provider == "twscrape":
-        try:
-            return "twscrape", TwscrapeApiClient(accounts_db_path=Path(cfg.twscrape_accounts_db_path))
-        except ValueError as exc:
-            raise typer.BadParameter(str(exc)) from exc
-
     raise typer.BadParameter(f"Unsupported api_provider: {cfg.api_provider}")
 
 
 def _provider_credential_status(
     provider: str,
     fixture_mode: bool,
-    *,
-    twscrape_accounts_db_path: Path | None = None,
 ) -> tuple[bool, str]:
     if fixture_mode:
         return True, "fixture override"
@@ -96,23 +85,6 @@ def _provider_credential_status(
     if provider == "socialdata":
         token_ok = bool(os.getenv("SOCIALDATA_API_KEY"))
         return token_ok, f"SOCIALDATA_API_KEY: {'set' if token_ok else 'not set'}"
-
-    if provider == "twscrape":
-        required = {
-            "XREPORTER_TWS_USERNAME": os.getenv("XREPORTER_TWS_USERNAME"),
-            "XREPORTER_TWS_PASSWORD": os.getenv("XREPORTER_TWS_PASSWORD"),
-            "XREPORTER_TWS_EMAIL": os.getenv("XREPORTER_TWS_EMAIL"),
-            "XREPORTER_TWS_EMAIL_PASSWORD": os.getenv("XREPORTER_TWS_EMAIL_PASSWORD"),
-        }
-        missing = [name for name, value in required.items() if not value]
-        if not missing:
-            return True, "all twscrape credentials set"
-
-        if twscrape_accounts_db_path and twscrape_accounts_db_has_account(twscrape_accounts_db_path):
-            return True, f"existing account pool: {twscrape_accounts_db_path}"
-
-        if missing:
-            return False, f"missing: {', '.join(missing)}"
 
     return False, f"unknown provider: {provider}"
 
@@ -132,23 +104,21 @@ def _progress() -> Progress:
 def config_init(
     username: str = typer.Option(..., "--username"),
     lang: str = typer.Option("auto", "--lang"),
-    api_provider: str = typer.Option("twscrape", "--api-provider"),
+    api_provider: str = typer.Option("official", "--api-provider"),
     db_path: Path | None = typer.Option(None, "--db-path"),
     report_dir: Path | None = typer.Option(None, "--report-dir"),
-    twscrape_accounts_db_path: Path | None = typer.Option(None, "--twscrape-accounts-db-path"),
     following_cap: int = typer.Option(200, "--following-cap"),
     include_replies: bool = typer.Option(True, "--include-replies/--no-include-replies"),
 ) -> None:
     if lang not in {"auto", "en", "zh"}:
         raise typer.BadParameter("--lang must be one of auto|en|zh")
-    if api_provider not in {"official", "twscrape", "socialdata"}:
-        raise typer.BadParameter("--api-provider must be one of official|twscrape|socialdata")
+    if api_provider not in {"official", "socialdata"}:
+        raise typer.BadParameter("--api-provider must be one of official|socialdata")
     if following_cap <= 0:
         raise typer.BadParameter("--following-cap must be > 0")
 
     selected_db_path = db_path or default_db_path()
     selected_report_dir = report_dir or default_report_dir()
-    selected_tws_accounts_db_path = twscrape_accounts_db_path or default_twscrape_accounts_db_path()
 
     cfg = AppConfig(
         username=username,
@@ -158,7 +128,6 @@ def config_init(
         following_cap_default=following_cap,
         include_replies_default=include_replies,
         api_provider=cast(APIProvider, api_provider),
-        twscrape_accounts_db_path=str(selected_tws_accounts_db_path),
     )
     path = save_config(cfg)
     language = resolve_language(lang)
@@ -296,7 +265,6 @@ def doctor() -> None:
     credential_ok, credential_detail = _provider_credential_status(
         provider,
         fixture_mode,
-        twscrape_accounts_db_path=Path(cfg.twscrape_accounts_db_path) if cfg else None,
     )
 
     db_ok = False

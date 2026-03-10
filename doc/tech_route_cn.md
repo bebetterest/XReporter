@@ -12,7 +12,7 @@
 CLI (Typer + Rich)
   -> Config + i18n
   -> CollectorService
-       -> provider 适配层（XApiClient / TwscrapeApiClient / SocialDataApiClient / FixtureXApiClient）
+       -> provider 适配层（XApiClient / SocialDataApiClient / FixtureXApiClient）
        -> Normalizer
        -> SQLiteStorage
   -> Report Renderer (static HTML)
@@ -31,7 +31,6 @@ CLI (Typer + Rich)
 ## 采集流程
 
 1. 从配置读取 `api_provider` 选择数据源（fixture 环境变量优先覆盖）。
-   - Twscrape 鉴权策略：若 `twscrape_accounts_db_path` 已有账号则复用账号池登录；否则首次引导需完整 `XREPORTER_TWS_*` 凭据。
 2. 按用户名解析目标用户。
 3. 分页拉取关注列表并应用上限。
 4. 拉取每个关注用户在指定时间范围内的时间线。

@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from xreporter.config import AppConfig, default_twscrape_accounts_db_path, load_config, save_config
+from xreporter.config import AppConfig, load_config, save_config
 
 
 def test_config_roundtrip_with_provider_fields(tmp_path: Path) -> None:
@@ -14,7 +14,6 @@ def test_config_roundtrip_with_provider_fields(tmp_path: Path) -> None:
         following_cap_default=123,
         include_replies_default=False,
         api_provider="socialdata",
-        twscrape_accounts_db_path=str(tmp_path / "accounts.db"),
     )
     path = tmp_path / "config.toml"
     save_config(cfg, path=path)
@@ -22,7 +21,6 @@ def test_config_roundtrip_with_provider_fields(tmp_path: Path) -> None:
     loaded = load_config(path=path)
     assert loaded.username == "target"
     assert loaded.api_provider == "socialdata"
-    assert loaded.twscrape_accounts_db_path == str(tmp_path / "accounts.db")
     assert loaded.following_cap_default == 123
     assert loaded.include_replies_default is False
 
@@ -44,7 +42,6 @@ def test_legacy_config_defaults_to_official_provider(tmp_path: Path) -> None:
 
     loaded = load_config(path=path)
     assert loaded.api_provider == "official"
-    assert loaded.twscrape_accounts_db_path == str(default_twscrape_accounts_db_path())
 
 
 def test_invalid_provider_raises(tmp_path: Path) -> None:
@@ -61,4 +58,21 @@ def test_invalid_provider_raises(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ValueError, match="api_provider"):
+        load_config(path=path)
+
+
+def test_twscrape_provider_is_rejected(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(
+        "\n".join(
+            [
+                'username = "target"',
+                'api_provider = "twscrape"',
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="removed"):
         load_config(path=path)

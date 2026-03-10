@@ -12,7 +12,7 @@
 CLI (Typer + Rich)
   -> Config + i18n
   -> CollectorService
-       -> provider adapter (XApiClient / TwscrapeApiClient / SocialDataApiClient / FixtureXApiClient)
+       -> provider adapter (XApiClient / SocialDataApiClient / FixtureXApiClient)
        -> Normalizer
        -> SQLiteStorage
   -> Report Renderer (static HTML)
@@ -31,7 +31,6 @@ CLI (Typer + Rich)
 ## Collection Flow
 
 1. Select API provider from config (`api_provider`), with fixture env override.
-   - Twscrape auth policy: if `twscrape_accounts_db_path` already has accounts, reuse pool login; otherwise bootstrap requires full `XREPORTER_TWS_*` credentials.
 2. Resolve target user by username.
 3. Fetch followings with pagination and cap.
 4. Fetch each following's timeline in selected range.

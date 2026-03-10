@@ -49,8 +49,6 @@
 
 - 严禁将 `X_BEARER_TOKEN` 持久化到项目文件。
 - 严禁将 `SOCIALDATA_API_KEY` 持久化到项目文件。
-- 严禁将 `XREPORTER_TWS_*` 凭据持久化到项目文件。
-- Twscrape 在账号池为空时首次引导需完整 `XREPORTER_TWS_*` 凭据；若账号池已有账号，则不强制邮箱凭据。
 - 使用环境变量管理密钥。
 - fixture 文件不得包含真实凭据。
 

@@ -49,8 +49,6 @@ This file defines the working principles for humans and agents in this repositor
 
 - Never persist `X_BEARER_TOKEN` in project files.
 - Never persist `SOCIALDATA_API_KEY` in project files.
-- Never persist `XREPORTER_TWS_*` credentials in project files.
-- Twscrape bootstrap requires full `XREPORTER_TWS_*` credentials when account pool is empty; existing account pools can run without forcing email credentials.
 - Use environment variables for secrets.
 - Keep fixture files free of real credentials.
 

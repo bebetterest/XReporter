@@ -6,14 +6,14 @@ XReporter is a CLI-first tool that collects activities from followings of a targ
 
 - Version: `0.1.0` (MVI)
 - Implemented pipeline: `config -> collect -> sqlite -> render`
-- API mode: multi-provider (`official`, `twscrape`, `socialdata`) via config switch
+- API mode: multi-provider (`official`, `socialdata`) via config switch
 - Offline demo/test mode: fixture API file via `XREPORTER_FIXTURE_FILE`
 
 ## Features (v0.1)
 
 - CLI commands:
 1. `xreporter config init --username <name> [--lang auto|en|zh] [--db-path <path>] [--report-dir <path>] [--following-cap <int>]`
-   - provider options: `[--api-provider official|twscrape|socialdata] [--twscrape-accounts-db-path <path>]`
+   - provider option: `[--api-provider official|socialdata]`
 2. `xreporter config show`
 3. `xreporter collect [--username <name>] [--last 12h|24h | --since <ISO8601> --until <ISO8601>] [--following-cap <int>] [--include-replies/--no-include-replies]`
 4. `xreporter render [--run-id <id> | --latest] [--output <html_path>]`
@@ -51,20 +51,9 @@ export X_BEARER_TOKEN="<your_token>"
 
 # socialdata
 export SOCIALDATA_API_KEY="<your_socialdata_api_key>"
-
-# twscrape bootstrap (required when account pool is empty)
-export XREPORTER_TWS_USERNAME="<x_username>"
-export XREPORTER_TWS_PASSWORD="<x_password>"
-export XREPORTER_TWS_EMAIL="<email_for_verification>"
-export XREPORTER_TWS_EMAIL_PASSWORD="<email_password>"
 ```
 
 XReporter never writes credentials into config files.
-
-For `twscrape`, credential requirements depend on the account pool state:
-
-- If `twscrape_accounts_db_path` has no account yet, all 4 `XREPORTER_TWS_*` variables are required.
-- If the account pool already contains at least one account, XReporter will reuse that pool and email credentials are optional.
 
 ## Quick Start
 
@@ -72,7 +61,7 @@ For `twscrape`, credential requirements depend on the account pool state:
 
 ```bash
 xreporter config init --username target_user --lang auto
-# default api_provider is twscrape for new configs
+# default api_provider is official for new configs
 ```
 
 2. Run collection:
@@ -95,44 +84,6 @@ xreporter render --latest
 xreporter doctor
 ```
 
-## twscrape Usage Guide
-
-### First-time bootstrap (empty account pool)
-
-1. Set full twscrape credentials:
-
-```bash
-export XREPORTER_TWS_USERNAME="<x_username>"
-export XREPORTER_TWS_PASSWORD="<x_password>"
-export XREPORTER_TWS_EMAIL="<email_for_verification>"
-export XREPORTER_TWS_EMAIL_PASSWORD="<email_password>"
-```
-
-2. Initialize config with provider and account DB path:
-
-```bash
-xreporter config init \
-  --username target_user \
-  --api-provider twscrape \
-  --twscrape-accounts-db-path ~/.xreporter/twscrape_accounts.db
-```
-
-3. Verify and run:
-
-```bash
-xreporter doctor
-xreporter collect --last 24h
-xreporter render --latest
-```
-
-### Reuse existing account pool
-
-When `~/.xreporter/twscrape_accounts.db` (or your configured path) already has account records:
-
-- You can run `collect` and `doctor` without forcing email credentials.
-- XReporter will skip account bootstrap and call `login_all` on existing pool accounts.
-- If the pool is actually empty, collection still fails with missing credential errors, which means bootstrap credentials are still needed once.
-
 ## Configuration
 
 Default config file path:
@@ -147,8 +98,7 @@ Config schema:
 - `report_dir` (string)
 - `following_cap_default` (int, default `200`)
 - `include_replies_default` (bool, default `true`)
-- `api_provider` (`official|twscrape|socialdata`; legacy config without this field defaults to `official`)
-- `twscrape_accounts_db_path` (string, default `~/.xreporter/twscrape_accounts.db`)
+- `api_provider` (`official|socialdata`; legacy config without this field defaults to `official`)
 
 ## Project Structure
 

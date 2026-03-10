@@ -60,6 +60,12 @@
   - new `run_warnings` table and render integration (red warning section with username/link/API path/raw body)
   - added tests for service warning flow, storage warning persistence, and warning rendering
 - Executed full test suite in `XReporter` after privacy-warning update: **34 passed**.
+- Removed `twscrape` support from runtime and config:
+  - providers are now limited to `official|socialdata`
+  - removed `TwscrapeApiClient` and twscrape credential/account-pool flow
+  - removed `twscrape` dependency from `pyproject.toml`
+- Updated tests and bilingual docs to match provider cleanup.
+- Executed full test suite in `XReporter` after provider cleanup: **30 passed**.
 
 ### Pending / Next
 

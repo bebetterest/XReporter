@@ -60,6 +60,12 @@
   - 新增 `run_warnings` 表，并接入报告红色告警区（用户名/链接/API 路径/原始错误体）
   - 新增服务层告警流程、告警持久化、告警渲染测试
 - 已在 `XReporter` 环境执行全量测试（隐私告警改造后）：**34 项通过**。
+- 已从运行时与配置中移除 `twscrape` 支持：
+  - provider 现仅支持 `official|socialdata`
+  - 已删除 `TwscrapeApiClient` 及 twscrape 凭据/账号池流程
+  - 已从 `pyproject.toml` 移除 `twscrape` 依赖
+- 已同步更新测试与中英文文档，确保 provider 清理后一致。
+- 已在 `XReporter` 环境执行全量测试（provider 清理后）：**30 项通过**。
 
 ### 待办 / 下一步
 

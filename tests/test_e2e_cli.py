@@ -106,7 +106,7 @@ def test_collect_render_and_idempotency(tmp_path: Path) -> None:
     assert result.exit_code == 0, result.output
     show_result = runner.invoke(app, ["config", "show"], env=env)
     assert show_result.exit_code == 0, show_result.output
-    assert '"api_provider": "twscrape"' in show_result.output
+    assert '"api_provider": "official"' in show_result.output
 
     collect_args = [
         "collect",
