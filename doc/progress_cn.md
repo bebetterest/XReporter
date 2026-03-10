@@ -40,6 +40,17 @@
   - `username=betterestli`，执行 `collect --last 12h --following-cap 500`
   - run `3` 在时间线进度 `243/411` 时因 X API `402 CreditsDepleted` 失败
   - 已保留部分数据（`173` 条活动），并可正常渲染报告（`run_3.html`）
+- 已完成通过配置切换的多 provider 采集：
+  - 新增 `api_provider`（`official|twscrape|socialdata`）
+  - 新增 `twscrape_accounts_db_path`
+  - 旧配置缺失字段时默认回退 `official`
+- 已新增 `SocialDataApiClient` 与 `TwscrapeApiClient` 适配层，归一化/存储/渲染主链路保持不变。
+- 已完成 provider 感知的 client 工厂与 doctor 检查：
+  - fixture 环境变量仍为最高优先级
+  - 凭据检查按当前 provider 执行
+- 已为 `runs` 表新增 `api_provider` 字段，并补齐已有数据库的自动迁移逻辑。
+- 已新增配置兼容、provider 选路、存储迁移、新 provider 适配层测试。
+- 已在 `XReporter` 环境执行全量测试（多 provider 改造后）：**29 项通过**。
 
 ### 待办 / 下一步
 

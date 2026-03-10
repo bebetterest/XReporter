@@ -40,6 +40,17 @@
   - `username=betterestli`, `collect --last 12h --following-cap 500`
   - run `3` reached timeline progress `243/411` and then failed with X API `402 CreditsDepleted`
   - partial data persisted (`173` activities) and report rendering still works (`run_3.html`)
+- Implemented multi-provider collection via config switch:
+  - added `api_provider` (`official|twscrape|socialdata`)
+  - added `twscrape_accounts_db_path`
+  - legacy config fallback defaults to `official`
+- Added `SocialDataApiClient` and `TwscrapeApiClient` adapters while keeping normalization/storage/render path unchanged.
+- Added provider-aware client factory and doctor checks:
+  - fixture env still has highest priority
+  - credential checks now follow selected provider
+- Extended `runs` schema with `api_provider` and added auto-migration for existing databases.
+- Added new tests for config compatibility, provider selection, storage migration, and new provider adapters.
+- Executed full test suite in `XReporter` environment after multi-provider changes: **29 passed**.
 
 ### Pending / Next
 

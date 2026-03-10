@@ -12,7 +12,7 @@
 CLI (Typer + Rich)
   -> Config + i18n
   -> CollectorService
-       -> XApiClient / FixtureXApiClient
+       -> provider 适配层（XApiClient / TwscrapeApiClient / SocialDataApiClient / FixtureXApiClient）
        -> Normalizer
        -> SQLiteStorage
   -> Report Renderer (static HTML)
@@ -29,13 +29,14 @@ CLI (Typer + Rich)
 
 ## 采集流程
 
-1. 按用户名解析目标用户。
-2. 分页拉取关注列表并应用上限。
-3. 拉取每个关注用户在指定时间范围内的时间线。
-4. 按 ID 回补缺失的被引用原帖。
-5. 将事件归一化为 activity 记录。
-6. Upsert 用户/推文/活动并绑定到 run。
-7. 写入 run 结束状态与计数。
+1. 从配置读取 `api_provider` 选择数据源（fixture 环境变量优先覆盖）。
+2. 按用户名解析目标用户。
+3. 分页拉取关注列表并应用上限。
+4. 拉取每个关注用户在指定时间范围内的时间线。
+5. 按 ID 回补缺失的被引用原帖。
+6. 将事件归一化为 activity 记录。
+7. Upsert 用户/推文/活动并绑定到 run。
+8. 写入 run 结束状态与计数（`runs.api_provider` 持久化用于追溯）。
 
 ## 渲染流程
 
@@ -53,6 +54,7 @@ CLI (Typer + Rich)
 ## 可靠性
 
 - 对 `429` 和 `5xx` 执行指数退避 + 抖动重试。
+- SocialData 适配层复用 `429/5xx` 重试策略。
 - 采集中失败会将 run 标记为 `failed` 并记录错误信息。
 - Upsert 策略保证重复采集不产生重复数据。
 

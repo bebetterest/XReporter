@@ -6,13 +6,14 @@ XReporter is a CLI-first tool that collects activities from followings of a targ
 
 - Version: `0.1.0` (MVI)
 - Implemented pipeline: `config -> collect -> sqlite -> render`
-- API mode: official X API v2 (Bearer token)
+- API mode: multi-provider (`official`, `twscrape`, `socialdata`) via config switch
 - Offline demo/test mode: fixture API file via `XREPORTER_FIXTURE_FILE`
 
 ## Features (v0.1)
 
 - CLI commands:
 1. `xreporter config init --username <name> [--lang auto|en|zh] [--db-path <path>] [--report-dir <path>] [--following-cap <int>]`
+   - provider options: `[--api-provider official|twscrape|socialdata] [--twscrape-accounts-db-path <path>]`
 2. `xreporter config show`
 3. `xreporter collect [--username <name>] [--last 12h|24h | --since <ISO8601> --until <ISO8601>] [--following-cap <int>] [--include-replies/--no-include-replies]`
 4. `xreporter render [--run-id <id> | --latest] [--output <html_path>]`
@@ -41,10 +42,20 @@ pip install -e .[dev]
 
 ## Credentials
 
-Production API mode requires:
+Provider credentials (env only):
 
 ```bash
+# official
 export X_BEARER_TOKEN="<your_token>"
+
+# socialdata
+export SOCIALDATA_API_KEY="<your_socialdata_api_key>"
+
+# twscrape (single account v1)
+export XREPORTER_TWS_USERNAME="<x_username>"
+export XREPORTER_TWS_PASSWORD="<x_password>"
+export XREPORTER_TWS_EMAIL="<email_for_verification>"
+export XREPORTER_TWS_EMAIL_PASSWORD="<email_password>"
 ```
 
 XReporter never writes credentials into config files.
@@ -55,6 +66,7 @@ XReporter never writes credentials into config files.
 
 ```bash
 xreporter config init --username target_user --lang auto
+# default api_provider is twscrape for new configs
 ```
 
 2. Run collection:
@@ -91,6 +103,8 @@ Config schema:
 - `report_dir` (string)
 - `following_cap_default` (int, default `200`)
 - `include_replies_default` (bool, default `true`)
+- `api_provider` (`official|twscrape|socialdata`; legacy config without this field defaults to `official`)
+- `twscrape_accounts_db_path` (string, default `~/.xreporter/twscrape_accounts.db`)
 
 ## Project Structure
 
@@ -125,5 +139,6 @@ Covered in tests:
 ## Notes
 
 - X API access level controls practical coverage and rate limits.
+- Provider can be switched in config without changing downstream normalization/storage/rendering.
 - For large following lists, tune `--following-cap` based on API quota.
 - This repository keeps English and Chinese docs in sync (`*_cn.md`).

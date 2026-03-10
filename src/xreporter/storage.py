@@ -36,6 +36,10 @@ class SQLiteStorage:
             return None
         return dt.astimezone(timezone.utc).isoformat()
 
+    def _column_exists(self, table: str, column: str) -> bool:
+        rows = self._conn.execute(f"PRAGMA table_info({table})").fetchall()
+        return any(str(row["name"]) == column for row in rows)
+
     def init_schema(self) -> None:
         self._conn.executescript(
             """
@@ -98,6 +102,7 @@ class SQLiteStorage:
                 target_user_id TEXT NOT NULL,
                 since_utc TEXT NOT NULL,
                 until_utc TEXT NOT NULL,
+                api_provider TEXT NOT NULL DEFAULT 'official',
                 include_replies INTEGER NOT NULL,
                 following_cap INTEGER NOT NULL,
                 started_at TEXT NOT NULL,
@@ -120,6 +125,13 @@ class SQLiteStorage:
             CREATE INDEX IF NOT EXISTS idx_run_activities_run_id ON run_activities(run_id);
             """
         )
+        if not self._column_exists("runs", "api_provider"):
+            self._conn.execute(
+                """
+                ALTER TABLE runs
+                ADD COLUMN api_provider TEXT NOT NULL DEFAULT 'official'
+                """
+            )
         self._conn.commit()
 
     def create_run(
@@ -127,6 +139,7 @@ class SQLiteStorage:
         *,
         username: str,
         target_user_id: str,
+        api_provider: str,
         time_range: TimeRange,
         include_replies: bool,
         following_cap: int,
@@ -138,17 +151,19 @@ class SQLiteStorage:
                 target_user_id,
                 since_utc,
                 until_utc,
+                api_provider,
                 include_replies,
                 following_cap,
                 started_at,
                 status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 username,
                 target_user_id,
                 self._to_iso(time_range.since),
                 self._to_iso(time_range.until),
+                api_provider,
                 1 if include_replies else 0,
                 following_cap,
                 self._utc_now_str(),

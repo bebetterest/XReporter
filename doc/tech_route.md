@@ -12,7 +12,7 @@
 CLI (Typer + Rich)
   -> Config + i18n
   -> CollectorService
-       -> XApiClient / FixtureXApiClient
+       -> provider adapter (XApiClient / TwscrapeApiClient / SocialDataApiClient / FixtureXApiClient)
        -> Normalizer
        -> SQLiteStorage
   -> Report Renderer (static HTML)
@@ -29,13 +29,14 @@ CLI (Typer + Rich)
 
 ## Collection Flow
 
-1. Resolve target user by username.
-2. Fetch followings with pagination and cap.
-3. Fetch each following's timeline in selected range.
-4. Fetch unresolved referenced tweets by IDs.
-5. Normalize events into activity records.
-6. Upsert users/tweets/activities, attach to run.
-7. Finish run with status and counters.
+1. Select API provider from config (`api_provider`), with fixture env override.
+2. Resolve target user by username.
+3. Fetch followings with pagination and cap.
+4. Fetch each following's timeline in selected range.
+5. Fetch unresolved referenced tweets by IDs.
+6. Normalize events into activity records.
+7. Upsert users/tweets/activities, attach to run.
+8. Finish run with status and counters (`runs.api_provider` persisted for traceability).
 
 ## Rendering Flow
 
@@ -53,6 +54,7 @@ CLI (Typer + Rich)
 ## Reliability
 
 - API retry policy on `429` and `5xx` with exponential backoff + jitter.
+- SocialData adapter reuses retry policy on `429/5xx`.
 - Failure during collection marks run as `failed` with error message.
 - Upsert strategy ensures deduplication across reruns.
 

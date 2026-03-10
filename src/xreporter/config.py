@@ -5,6 +5,10 @@ import os
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal, cast
+
+
+APIProvider = Literal["official", "twscrape", "socialdata"]
 
 
 def default_home_dir() -> Path:
@@ -29,6 +33,10 @@ def default_report_dir() -> Path:
     return default_home_dir() / "reports"
 
 
+def default_twscrape_accounts_db_path() -> Path:
+    return default_home_dir() / "twscrape_accounts.db"
+
+
 @dataclass
 class AppConfig:
     username: str
@@ -37,6 +45,8 @@ class AppConfig:
     report_dir: str = field(default_factory=lambda: str(default_report_dir()))
     following_cap_default: int = 200
     include_replies_default: bool = True
+    api_provider: APIProvider = "official"
+    twscrape_accounts_db_path: str = field(default_factory=lambda: str(default_twscrape_accounts_db_path()))
 
 
 def _ensure_parent(path: Path) -> None:
@@ -54,6 +64,8 @@ def save_config(config: AppConfig, path: Path | None = None) -> Path:
         f"report_dir = {json.dumps(config.report_dir)}",
         f"following_cap_default = {config.following_cap_default}",
         f"include_replies_default = {str(config.include_replies_default).lower()}",
+        f"api_provider = {json.dumps(config.api_provider)}",
+        f"twscrape_accounts_db_path = {json.dumps(config.twscrape_accounts_db_path)}",
     ]
 
     target.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -79,6 +91,11 @@ def load_config(path: Path | None = None) -> AppConfig:
         raise ValueError("following_cap_default must be > 0")
 
     include_replies_default = bool(data.get("include_replies_default", True))
+    api_provider_raw = str(data.get("api_provider", "official")).strip().lower()
+    if api_provider_raw not in {"official", "twscrape", "socialdata"}:
+        raise ValueError("api_provider must be one of official|twscrape|socialdata")
+
+    twscrape_accounts_db_path = str(data.get("twscrape_accounts_db_path", default_twscrape_accounts_db_path()))
 
     return AppConfig(
         username=username,
@@ -87,6 +104,8 @@ def load_config(path: Path | None = None) -> AppConfig:
         report_dir=str(data.get("report_dir", default_report_dir())),
         following_cap_default=following_cap_default,
         include_replies_default=include_replies_default,
+        api_provider=cast(APIProvider, api_provider_raw),
+        twscrape_accounts_db_path=twscrape_accounts_db_path,
     )
 
 

@@ -12,7 +12,7 @@
 ## 工程规则
 
 - 模块职责聚焦：
-  - `x_api.py`：API 访问与重试策略
+  - `x_api.py`：多 provider API 访问、数据映射与重试策略
   - `normalizer.py`：活动归一化
   - `storage.py`：持久化与幂等
   - `render.py`：报告生成
@@ -48,6 +48,8 @@
 ## 安全与密钥
 
 - 严禁将 `X_BEARER_TOKEN` 持久化到项目文件。
+- 严禁将 `SOCIALDATA_API_KEY` 持久化到项目文件。
+- 严禁将 `XREPORTER_TWS_*` 凭据持久化到项目文件。
 - 使用环境变量管理密钥。
 - fixture 文件不得包含真实凭据。
 

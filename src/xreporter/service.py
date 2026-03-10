@@ -26,6 +26,7 @@ class CollectorService:
         self,
         *,
         username: str,
+        api_provider: str,
         time_range: TimeRange,
         following_cap: int,
         include_replies: bool,
@@ -43,6 +44,7 @@ class CollectorService:
         run_id = self.storage.create_run(
             username=username,
             target_user_id=target_user["id"],
+            api_provider=api_provider,
             time_range=time_range,
             include_replies=include_replies,
             following_cap=following_cap,

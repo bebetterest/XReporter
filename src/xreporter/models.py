@@ -70,6 +70,7 @@ class CollectionRun:
     target_user_id: str
     since_utc: datetime
     until_utc: datetime
+    api_provider: str
     include_replies: bool
     following_cap: int
     status: str

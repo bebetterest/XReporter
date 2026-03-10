@@ -12,7 +12,7 @@ This file defines the working principles for humans and agents in this repositor
 ## Engineering Rules
 
 - Keep modules focused:
-  - `x_api.py`: API access and retry behavior
+  - `x_api.py`: multi-provider API access, mapping, and retry behavior
   - `normalizer.py`: activity normalization
   - `storage.py`: persistence and idempotency
   - `render.py`: report generation
@@ -48,6 +48,8 @@ This file defines the working principles for humans and agents in this repositor
 ## Security & Secrets
 
 - Never persist `X_BEARER_TOKEN` in project files.
+- Never persist `SOCIALDATA_API_KEY` in project files.
+- Never persist `XREPORTER_TWS_*` credentials in project files.
 - Use environment variables for secrets.
 - Keep fixture files free of real credentials.
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Optional, cast
 
 import typer
 from rich.console import Console
@@ -11,11 +11,13 @@ from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeEl
 from rich.table import Table
 
 from xreporter.config import (
+    APIProvider,
     AppConfig,
     config_exists,
     default_config_path,
     default_db_path,
     default_report_dir,
+    default_twscrape_accounts_db_path,
     load_config,
     save_config,
 )
@@ -24,7 +26,7 @@ from xreporter.render import render_report
 from xreporter.service import CollectorService
 from xreporter.storage import SQLiteStorage
 from xreporter.time_range import TimeRangeError, parse_time_range
-from xreporter.x_api import FixtureXApiClient, XApiClient, XApiError
+from xreporter.x_api import FixtureXApiClient, SocialDataApiClient, TwscrapeApiClient, XApiClient, XApiError
 
 
 app = typer.Typer(help="XReporter CLI")
@@ -45,15 +47,57 @@ def _effective_lang(cfg: AppConfig) -> str:
     return resolve_language(cfg.language)
 
 
-def _build_api_client() -> object:
+def _build_api_client(cfg: AppConfig) -> tuple[str, object]:
     fixture_path = os.getenv("XREPORTER_FIXTURE_FILE")
     if fixture_path:
-        return FixtureXApiClient(Path(fixture_path))
+        return "fixture", FixtureXApiClient(Path(fixture_path))
 
-    token = os.getenv("X_BEARER_TOKEN")
-    if not token:
-        raise typer.BadParameter("X_BEARER_TOKEN is required. Set env var or XREPORTER_FIXTURE_FILE.")
-    return XApiClient(token=token)
+    if cfg.api_provider == "official":
+        token = os.getenv("X_BEARER_TOKEN")
+        if not token:
+            raise typer.BadParameter("X_BEARER_TOKEN is required for provider=official.")
+        return "official", XApiClient(token=token)
+
+    if cfg.api_provider == "socialdata":
+        token = os.getenv("SOCIALDATA_API_KEY")
+        if not token:
+            raise typer.BadParameter("SOCIALDATA_API_KEY is required for provider=socialdata.")
+        return "socialdata", SocialDataApiClient(token=token)
+
+    if cfg.api_provider == "twscrape":
+        try:
+            return "twscrape", TwscrapeApiClient(accounts_db_path=Path(cfg.twscrape_accounts_db_path))
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+
+    raise typer.BadParameter(f"Unsupported api_provider: {cfg.api_provider}")
+
+
+def _provider_credential_status(provider: str, fixture_mode: bool) -> tuple[bool, str]:
+    if fixture_mode:
+        return True, "fixture override"
+
+    if provider == "official":
+        token_ok = bool(os.getenv("X_BEARER_TOKEN"))
+        return token_ok, f"X_BEARER_TOKEN: {'set' if token_ok else 'not set'}"
+
+    if provider == "socialdata":
+        token_ok = bool(os.getenv("SOCIALDATA_API_KEY"))
+        return token_ok, f"SOCIALDATA_API_KEY: {'set' if token_ok else 'not set'}"
+
+    if provider == "twscrape":
+        required = {
+            "XREPORTER_TWS_USERNAME": os.getenv("XREPORTER_TWS_USERNAME"),
+            "XREPORTER_TWS_PASSWORD": os.getenv("XREPORTER_TWS_PASSWORD"),
+            "XREPORTER_TWS_EMAIL": os.getenv("XREPORTER_TWS_EMAIL"),
+            "XREPORTER_TWS_EMAIL_PASSWORD": os.getenv("XREPORTER_TWS_EMAIL_PASSWORD"),
+        }
+        missing = [name for name, value in required.items() if not value]
+        if missing:
+            return False, f"missing: {', '.join(missing)}"
+        return True, "all twscrape credentials set"
+
+    return False, f"unknown provider: {provider}"
 
 
 def _progress() -> Progress:
@@ -71,18 +115,23 @@ def _progress() -> Progress:
 def config_init(
     username: str = typer.Option(..., "--username"),
     lang: str = typer.Option("auto", "--lang"),
+    api_provider: str = typer.Option("twscrape", "--api-provider"),
     db_path: Path | None = typer.Option(None, "--db-path"),
     report_dir: Path | None = typer.Option(None, "--report-dir"),
+    twscrape_accounts_db_path: Path | None = typer.Option(None, "--twscrape-accounts-db-path"),
     following_cap: int = typer.Option(200, "--following-cap"),
     include_replies: bool = typer.Option(True, "--include-replies/--no-include-replies"),
 ) -> None:
     if lang not in {"auto", "en", "zh"}:
         raise typer.BadParameter("--lang must be one of auto|en|zh")
+    if api_provider not in {"official", "twscrape", "socialdata"}:
+        raise typer.BadParameter("--api-provider must be one of official|twscrape|socialdata")
     if following_cap <= 0:
         raise typer.BadParameter("--following-cap must be > 0")
 
     selected_db_path = db_path or default_db_path()
     selected_report_dir = report_dir or default_report_dir()
+    selected_tws_accounts_db_path = twscrape_accounts_db_path or default_twscrape_accounts_db_path()
 
     cfg = AppConfig(
         username=username,
@@ -91,6 +140,8 @@ def config_init(
         report_dir=str(selected_report_dir),
         following_cap_default=following_cap,
         include_replies_default=include_replies,
+        api_provider=cast(APIProvider, api_provider),
+        twscrape_accounts_db_path=str(selected_tws_accounts_db_path),
     )
     path = save_config(cfg)
     language = resolve_language(lang)
@@ -134,7 +185,7 @@ def collect(
     with SQLiteStorage(Path(cfg.db_path)) as storage:
         storage.init_schema()
 
-        api_client = _build_api_client()
+        effective_provider, api_client = _build_api_client(cfg)
         labels = {
             "resolve": tr(language, "progress_resolve"),
             "followings": tr(language, "progress_followings"),
@@ -146,6 +197,7 @@ def collect(
             with _progress() as progress:
                 result = service.collect_with_error_handling(
                     username=selected_username,
+                    api_provider=effective_provider,
                     time_range=time_range,
                     following_cap=selected_following_cap,
                     include_replies=selected_include_replies,
@@ -213,8 +265,9 @@ def doctor() -> None:
         except Exception:
             cfg_ok = False
 
-    token_ok = bool(os.getenv("X_BEARER_TOKEN"))
     fixture_mode = bool(os.getenv("XREPORTER_FIXTURE_FILE"))
+    provider = cfg.api_provider if cfg else "official"
+    credential_ok, credential_detail = _provider_credential_status(provider, fixture_mode)
 
     db_ok = False
     db_message = ""
@@ -238,9 +291,15 @@ def doctor() -> None:
     )
 
     table.add_row(
-        tr(lang, "doctor_token"),
-        tr(lang, "doctor_ok") if token_ok or fixture_mode else tr(lang, "doctor_fail"),
-        "set" if token_ok else "not set",
+        tr(lang, "doctor_provider"),
+        tr(lang, "doctor_ok") if cfg_ok else tr(lang, "doctor_fail"),
+        provider if cfg_ok else "unknown",
+    )
+
+    table.add_row(
+        tr(lang, "doctor_credentials"),
+        tr(lang, "doctor_ok") if credential_ok else tr(lang, "doctor_fail"),
+        credential_detail,
     )
 
     table.add_row(
@@ -257,7 +316,7 @@ def doctor() -> None:
 
     console.print(table)
 
-    if not cfg_ok or (not token_ok and not fixture_mode) or not db_ok:
+    if not cfg_ok or not credential_ok or not db_ok:
         raise typer.Exit(code=1)
 
 
