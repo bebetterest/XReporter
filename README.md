@@ -6,10 +6,11 @@ XReporter is a CLI-first pipeline for collecting activity from a target X user's
 
 Current version: `0.1.0` (MVI)
 
+> Note: This project has been primarily operated and implemented by Codex.
+
 ## Before You Start
 
 - Official X API can be expensive at scale (pricing and quota can become a bottleneck).
-- SocialData provider is implemented and tested in this repo, but full production validation is still ongoing.
 
 ## Why XReporter
 
@@ -182,7 +183,6 @@ Config fields:
   - Adapter aligns to documented endpoints/params and avoids unsupported filters.
   - Referenced tweet backfill uses batch endpoint (`tweets-by-ids`) to reduce request count.
   - Timeline `403` privacy responses are recorded as warnings and skipped.
-  - Full production validation in this repo is still pending.
 - Timeline page cap (anti-waste)
   - Per-following timeline collection is capped at **5 pages** by default (both `official` and `socialdata` providers).
   - This is currently a code-level parameter (not a CLI flag).

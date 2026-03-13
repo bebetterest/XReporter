@@ -11,6 +11,7 @@
   - fixed SocialData user metric mapping (`followers/following/tweet` counters)
 - Added/updated tests for SocialData endpoint params, batch backfill, and user metric mapping.
 - Executed full test suite in `XReporter` environment after call-efficiency fix: **43 passed**.
+- Marked SocialData testing as completed and removed outdated pending-validation notes from README docs.
 
 - Added concurrent timeline collection for API calls:
   - new `--api-concurrency` option in `collect`

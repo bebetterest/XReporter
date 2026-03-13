@@ -11,6 +11,7 @@
   - 修复 SocialData 用户指标映射（`followers/following/tweet` 计数）
 - 新增/更新测试：覆盖 SocialData 端点参数、批量回补与用户指标映射。
 - 已在 `XReporter` 环境执行全量测试（调用效率修复后）：**43 项通过**。
+- 已标记 SocialData 测试完成，并删除 README 中“生产验证进行中”的过期说明。
 
 - 新增 API 并发时间线采集能力：
   - `collect` 新增 `--api-concurrency` 参数
