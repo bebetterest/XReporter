@@ -143,9 +143,11 @@ def test_collect_render_and_idempotency(tmp_path: Path) -> None:
     )
     assert result_render.exit_code == 0, result_render.output
     content = output_html.read_text(encoding="utf-8")
-    assert "Grouped Retweets / Quotes / Replies" in content
+    assert "Grouped Posts / Retweets / Quotes / Replies" in content
+    assert "Grouped by User" in content
     assert "Original content" in content
     assert "My own tweet" in content
+    assert content.count("My own tweet") >= 2
 
 
 def test_bilingual_cli_switch(tmp_path: Path) -> None:
@@ -181,6 +183,27 @@ def test_bilingual_cli_switch(tmp_path: Path) -> None:
     doctor_zh = runner.invoke(app, ["doctor"], env=env)
     assert doctor_zh.exit_code == 0
     assert "健康检查" in doctor_zh.output
+
+    collect_zh = runner.invoke(
+        app,
+        [
+            "collect",
+            "--since",
+            "2026-03-10T00:00:00Z",
+            "--until",
+            "2026-03-10T02:00:00Z",
+        ],
+        env=env,
+    )
+    assert collect_zh.exit_code == 0, collect_zh.output
+
+    report_zh = tmp_path / "report_zh.html"
+    render_zh = runner.invoke(app, ["render", "--latest", "--output", str(report_zh)], env=env)
+    assert render_zh.exit_code == 0, render_zh.output
+    report_zh_content = report_zh.read_text(encoding="utf-8")
+    assert "XReporter 活动报告" in report_zh_content
+    assert "按用户聚合" in report_zh_content
+    assert "完整活动时间线" in report_zh_content
 
     init_en = runner.invoke(
         app,

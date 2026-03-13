@@ -1,5 +1,34 @@
 # XReporter Progress Log
 
+## 2026-03-13
+
+### Completed (report UX + Chinese HTML)
+
+- Optimized static HTML report layout:
+  - added run summary dashboard (metadata + counters)
+  - improved grouped/timeline/warning card readability and responsive behavior
+  - added section counters and clearer navigation chips
+- Completed report-level bilingual rendering for `en`/`zh`:
+  - localized previously hardcoded action/timeline labels (`by/at/open/open post/unknown`)
+  - localized activity type display (`tweet|retweet|quote|reply`) in grouped and timeline blocks
+- Extended warning rendering details with warning type and recorded timestamp.
+- Extended grouped section to also include `tweet` activities (not only retweet/quote/reply), so original posts now appear in grouped cards.
+- Made grouped section and chronological timeline collapsible/expandable, with both sections collapsed by default.
+- Updated sort rules:
+  - chronological timeline now always sorts newest -> oldest
+  - grouped section sorts by action count (desc), and if tied, by latest action time (desc)
+- Added a new user-grouped section between grouped-by-original and timeline:
+  - grouped by actor user
+  - sorted by action count (desc), and if tied, by latest action time (desc)
+  - collapsible with default collapsed state
+- Added item-level collapse for grouped cards (grouped-by-original and grouped-by-user), default collapsed to improve readability for long content.
+- Refactored repository README for open-source onboarding:
+  - clearer information hierarchy (overview -> technical route -> quick start -> reference)
+  - friendlier navigation and troubleshooting sections for first-time users
+  - synchronized English/Chinese README content structure
+- Added render tests for Chinese HTML content and extended e2e bilingual coverage to validate zh report output.
+- Executed full test suite in `XReporter` environment after report UX/i18n update: **35 passed**.
+
 ## 2026-03-10
 
 ### Completed (v0.1 baseline)

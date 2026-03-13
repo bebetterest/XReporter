@@ -44,8 +44,14 @@ CLI (Typer + Rich)
 
 1. Select run (`--run-id` or latest).
 2. Load run-linked activities.
-3. Group retweet/quote/reply by `original_tweet_id`.
-4. Render single static HTML with warning section + grouped section + chronological timeline.
+3. Group post/retweet/quote/reply by `original_tweet_id` (for post, use `event_tweet_id` as group key).
+4. Render single static HTML with:
+   - localized copy by configured language (`en`/`zh`)
+   - run summary dashboard (metadata + counters)
+   - timeline sorted newest -> oldest
+   - grouped blocks sorted by action count (desc), then latest action time (desc)
+   - user-grouped blocks sorted by action count (desc), then latest action time (desc)
+   - warning section + grouped-by-original section + grouped-by-user section + chronological timeline.
 
 ## i18n Rules
 
