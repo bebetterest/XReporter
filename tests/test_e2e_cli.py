@@ -114,6 +114,8 @@ def test_collect_render_and_idempotency(tmp_path: Path) -> None:
         "2026-03-10T00:00:00Z",
         "--until",
         "2026-03-10T02:00:00Z",
+        "--api-concurrency",
+        "2",
     ]
 
     result_collect_1 = runner.invoke(app, collect_args, env=env)
@@ -124,21 +126,36 @@ def test_collect_render_and_idempotency(tmp_path: Path) -> None:
 
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
+    cur.execute("SELECT MAX(id) FROM runs")
+    latest_run_id = cur.fetchone()[0]
+    conn.close()
+
+    result_resume = runner.invoke(
+        app,
+        ["collect", "--resume-run-id", str(latest_run_id), "--api-concurrency", "2"],
+        env=env,
+    )
+    assert result_resume.exit_code == 0, result_resume.output
+    assert f"run_id={latest_run_id}" in result_resume.output
+
+    conn = sqlite3.connect(db_path)
+    cur = conn.cursor()
     cur.execute("SELECT COUNT(*) FROM activities")
     activity_count = cur.fetchone()[0]
     cur.execute("SELECT COUNT(*) FROM run_activities")
     run_activity_count = cur.fetchone()[0]
     cur.execute("SELECT MAX(id) FROM runs")
-    latest_run_id = cur.fetchone()[0]
+    latest_run_id_after_resume = cur.fetchone()[0]
     conn.close()
 
     assert activity_count == 2
     assert run_activity_count == 4
+    assert latest_run_id_after_resume == latest_run_id
 
     output_html = tmp_path / "report.html"
     result_render = runner.invoke(
         app,
-        ["render", "--run-id", str(latest_run_id), "--output", str(output_html)],
+        ["render", "--run-id", str(latest_run_id_after_resume), "--output", str(output_html)],
         env=env,
     )
     assert result_render.exit_code == 0, result_render.output

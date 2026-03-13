@@ -10,7 +10,7 @@
 
 ```text
 CLI (Typer + Rich)
-  -> Config + i18n
+  -> Config + i18n + logging bootstrap
   -> CollectorService
        -> provider 适配层（XApiClient / SocialDataApiClient / FixtureXApiClient）
        -> Normalizer
@@ -27,18 +27,21 @@ CLI (Typer + Rich)
 - `runs`：采集任务元数据与状态
 - `run_activities`：run 到 activity 的映射，保证可复现
 - `run_warnings`：非致命采集告警（provider/状态码/用户/链接/原始错误）
+- `run_followings`：按 following 记录检查点状态（`pending|in_progress|success|warning|failed`），用于断点续跑
 
 ## 采集流程
 
 1. 从配置读取 `api_provider` 选择数据源（fixture 环境变量优先覆盖）。
 2. 按用户名解析目标用户。
 3. 分页拉取关注列表并应用上限。
-4. 拉取每个关注用户在指定时间范围内的时间线。
+4. 拉取每个关注用户在指定时间范围内的时间线（并发 worker，可通过 `--api-concurrency` 配置）。
    - 对 SocialData 返回的 `403` 隐私限制，记录告警并继续后续用户。
-5. 按 ID 回补缺失的被引用原帖。
-6. 将事件归一化为 activity 记录。
-7. Upsert 用户/推文/活动并绑定到 run。
-8. 写入 run 结束状态与计数（`runs.api_provider` 持久化用于追溯）。
+5. 持续落库 following 级检查点状态（`run_followings`）。
+6. 按 ID 回补缺失的被引用原帖（若 provider 支持批量接口则优先批量）。
+7. 将事件归一化为 activity 记录。
+8. Upsert 用户/推文/活动并绑定到 run。
+9. 写入 run 结束状态与计数（`runs.api_provider` 持久化用于追溯）。
+10. 若中断或失败，可通过 `--resume-run-id` 仅继续未完成 following。
 
 ## 渲染流程
 
@@ -63,9 +66,19 @@ CLI (Typer + Rich)
 
 - 对 `429` 和 `5xx` 执行指数退避 + 抖动重试。
 - SocialData 适配层复用 `429/5xx` 重试策略。
+- 重试事件会同时写入日志，并通过 CLI 回调打印到终端。
+- SocialData 适配层避免发送不支持的时间线过滤参数，并使用文档定义的 followings/批量推文接口，减少无效调用。
+- 分页循环具备保护：当 cursor/token 重复时记录告警日志并中断循环，避免无界拉取。
 - SocialData 的 `403` 隐私限制会降级为 run 告警（不终止整次采集）。
 - 采集中失败会将 run 标记为 `failed` 并记录错误信息。
 - Upsert 策略保证重复采集不产生重复数据。
+
+## 可观测性
+
+- 统一运行时日志写入 `$XREPORTER_HOME/logs/xreporter.log`（默认 `~/.xreporter/logs/xreporter.log`）。
+- CLI 记录 `config/collect/render/doctor` 的命令开始、结束与关键入参。
+- API 适配层记录请求生命周期：方法、路径、状态码、耗时、重试、回退、失败响应摘要。
+- Service 与 Storage 记录 run 级关键节点：run 创建、warning 落库、batch 持久化、run 结束状态。
 
 ## 迭代路线
 

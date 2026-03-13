@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import logging
 
 import httpx
 
@@ -41,9 +42,13 @@ def test_following_pagination() -> None:
     api.close()
 
 
-def test_retry_then_success() -> None:
+def test_retry_then_success(caplog) -> None:  # type: ignore[no-untyped-def]
     attempts = {"n": 0}
     sleeps: list[float] = []
+    retry_notices: list[str] = []
+    xreporter_logger = logging.getLogger("xreporter")
+    xreporter_logger.addHandler(caplog.handler)
+    caplog.set_level(logging.INFO, logger="xreporter")
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path.endswith("/users/by/username/demo"):
@@ -60,13 +65,24 @@ def test_retry_then_success() -> None:
         sleep_func=lambda value: sleeps.append(value),
         random_func=lambda: 0.0,
         max_retries=3,
+        retry_callback=lambda message: retry_notices.append(message),
     )
 
-    user = api.get_user_by_username("demo")
-    assert user["id"] == "10"
-    assert attempts["n"] == 2
-    assert sleeps == [1.0]
-    api.close()
+    try:
+        user = api.get_user_by_username("demo")
+        assert user["id"] == "10"
+        assert attempts["n"] == 2
+        assert sleeps == [1.0]
+        assert len(retry_notices) == 1
+        assert "provider=official" in retry_notices[0]
+        assert "/users/by/username/demo" in retry_notices[0]
+        retry_logs = [record.getMessage() for record in caplog.records if "request retry" in record.getMessage()]
+        ok_logs = [record.getMessage() for record in caplog.records if "request ok" in record.getMessage()]
+        assert any("/users/by/username/demo" in message for message in retry_logs)
+        assert any("status=200" in message for message in ok_logs)
+    finally:
+        xreporter_logger.removeHandler(caplog.handler)
+        api.close()
 
 
 def test_fetch_unresolved_referenced_tweets() -> None:
@@ -124,4 +140,45 @@ def test_fetch_unresolved_referenced_tweets() -> None:
     assert "999" in payload.include_tweets
     assert payload.include_tweets["999"]["text"] == "origin"
     assert "30" in payload.include_users
+    api.close()
+
+
+def test_official_timeline_page_cap_prevents_excessive_calls() -> None:
+    calls = {"timeline": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/users/2/tweets"):
+            calls["timeline"] += 1
+            return httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {
+                            "id": str(calls["timeline"]),
+                            "author_id": "2",
+                            "text": "post",
+                            "created_at": "2026-03-10T01:00:00Z",
+                        }
+                    ],
+                    "meta": {"next_token": f"token-{calls['timeline']}"},
+                },
+            )
+        if request.url.path.endswith("/tweets"):
+            return httpx.Response(200, json={"data": []})
+        raise AssertionError(f"Unexpected URL: {request.url}")
+
+    client = httpx.Client(transport=httpx.MockTransport(handler), base_url="https://api.x.com/2")
+    api = XApiClient(token="test", client=client, max_timeline_pages=5)
+
+    payload = api.get_user_timeline(
+        user={"id": "2", "username": "u2", "name": "U2"},
+        time_range=TimeRange(
+            since=datetime(2026, 3, 10, 0, 0, tzinfo=timezone.utc),
+            until=datetime(2026, 3, 10, 2, 0, tzinfo=timezone.utc),
+        ),
+        include_replies=True,
+    )
+
+    assert calls["timeline"] == 5
+    assert len(payload.tweets) == 5
     api.close()

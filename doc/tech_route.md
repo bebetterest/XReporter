@@ -10,7 +10,7 @@
 
 ```text
 CLI (Typer + Rich)
-  -> Config + i18n
+  -> Config + i18n + logging bootstrap
   -> CollectorService
        -> provider adapter (XApiClient / SocialDataApiClient / FixtureXApiClient)
        -> Normalizer
@@ -27,18 +27,21 @@ CLI (Typer + Rich)
 - `runs`: collection run metadata and status
 - `run_activities`: run-to-activity mapping for reproducibility
 - `run_warnings`: non-fatal collection warnings (provider/status/user/link/raw error)
+- `run_followings`: per-following checkpoint state (`pending|in_progress|success|warning|failed`) for resume support
 
 ## Collection Flow
 
 1. Select API provider from config (`api_provider`), with fixture env override.
 2. Resolve target user by username.
 3. Fetch followings with pagination and cap.
-4. Fetch each following's timeline in selected range.
+4. Fetch each following's timeline in selected range (parallel workers, configurable by `--api-concurrency`).
    - For SocialData `403` privacy-restricted responses, record warning and continue.
-5. Fetch unresolved referenced tweets by IDs.
-6. Normalize events into activity records.
-7. Upsert users/tweets/activities, attach to run.
-8. Finish run with status and counters (`runs.api_provider` persisted for traceability).
+5. Persist following-level checkpoint status (`run_followings`) continuously.
+6. Fetch unresolved referenced tweets by IDs (use provider batch endpoint when available).
+7. Normalize events into activity records.
+8. Upsert users/tweets/activities, attach to run.
+9. Finish run with status and counters (`runs.api_provider` persisted for traceability).
+10. If interrupted/failed, resume with `--resume-run-id` and continue from non-success followings only.
 
 ## Rendering Flow
 
@@ -63,9 +66,19 @@ CLI (Typer + Rich)
 
 - API retry policy on `429` and `5xx` with exponential backoff + jitter.
 - SocialData adapter reuses retry policy on `429/5xx`.
+- Retry events are logged and also printed to terminal via CLI callback.
+- SocialData adapter avoids unsupported timeline filters and uses documented followings/tweet-batch endpoints to reduce wasted calls.
+- Pagination loops are guarded: repeated cursor/token values break the loop with warning logs.
 - SocialData `403` privacy errors are downgraded to run warnings (not fatal for the whole run).
 - Failure during collection marks run as `failed` with error message.
 - Upsert strategy ensures deduplication across reruns.
+
+## Observability
+
+- Central runtime logger writes to `$XREPORTER_HOME/logs/xreporter.log` (`~/.xreporter/logs/xreporter.log` by default).
+- CLI logs command start/end and critical inputs for `config/collect/render/doctor`.
+- API adapters log request lifecycle: method/path/status/latency/retry/fallback/failure body preview.
+- Service and storage log run-level markers: run creation, warning insertion, batch persistence, run finish status.
 
 ## Iteration Roadmap
 

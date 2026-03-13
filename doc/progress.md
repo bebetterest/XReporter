@@ -4,6 +4,41 @@
 
 ### Completed (report UX + Chinese HTML)
 
+- Reduced avoidable SocialData API calls:
+  - aligned followings fetch to documented `friends/list` endpoint and cursor params
+  - removed unsupported `limit` parameter from timeline requests
+  - switched unresolved referenced tweet backfill to batch endpoint (`tweets-by-ids`)
+  - fixed SocialData user metric mapping (`followers/following/tweet` counters)
+- Added/updated tests for SocialData endpoint params, batch backfill, and user metric mapping.
+- Executed full test suite in `XReporter` environment after call-efficiency fix: **43 passed**.
+
+- Added concurrent timeline collection for API calls:
+  - new `--api-concurrency` option in `collect`
+  - `CollectorService` now dispatches following timelines with a thread pool and persists results per completed task
+- Added interrupt/resume support for collection:
+  - new `run_followings` checkpoint table tracks per-following status (`pending|in_progress|success|warning|failed`)
+  - new `--resume-run-id` option continues the same run and skips already completed followings
+  - interruption/failure now leaves resumable checkpoints and marks run status accordingly
+- Added retry visibility upgrade:
+  - API retry events still go to logs
+  - retry summaries are now also printed to terminal through CLI callback
+- Added tests for:
+  - concurrent collection behavior
+  - failed-run resume path
+  - run_followings checkpoint lifecycle
+  - retry callback output for official/socialdata clients
+- Executed full test suite in `XReporter` environment after concurrency/resume/retry-output update: **41 passed**.
+
+- Added runtime observability upgrade:
+  - centralized rotating log file (`$XREPORTER_HOME/logs/xreporter.log`)
+  - command-level lifecycle logs for `config/collect/render/doctor`
+  - API request/retry/fallback/failure logs for official/socialdata adapters
+  - run/storage markers (run create/finish, warning insert, batch persist)
+  - new tests for logging setup and request retry log coverage
+- Added pagination safety guard:
+  - break timeline/following pagination when cursor/token repeats
+  - emit warning logs on repeated cursor to prevent indefinite collection loops
+  - added SocialData repeated-cursor timeline test
 - Optimized static HTML report layout:
   - added run summary dashboard (metadata + counters)
   - improved grouped/timeline/warning card readability and responsive behavior

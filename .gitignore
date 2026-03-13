@@ -7,5 +7,6 @@ htmlcov/
 .venv/
 .env
 .xreporter/
+.xreporter-local/
 reports/
 .DS_Store

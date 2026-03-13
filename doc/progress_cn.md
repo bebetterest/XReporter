@@ -4,6 +4,41 @@
 
 ### 已完成（报告体验优化 + 中文 HTML）
 
+- 降低 SocialData 可避免调用浪费：
+  - followings 拉取对齐文档 `friends/list` 端点与 cursor 参数
+  - 移除时间线请求中不受支持的 `limit` 参数
+  - 缺失引用推文回补改为批量接口（`tweets-by-ids`）
+  - 修复 SocialData 用户指标映射（`followers/following/tweet` 计数）
+- 新增/更新测试：覆盖 SocialData 端点参数、批量回补与用户指标映射。
+- 已在 `XReporter` 环境执行全量测试（调用效率修复后）：**43 项通过**。
+
+- 新增 API 并发时间线采集能力：
+  - `collect` 新增 `--api-concurrency` 参数
+  - `CollectorService` 改为线程池并发拉取 following 时间线，并按完成即落库
+- 新增中断续跑能力：
+  - 新增 `run_followings` 检查点表，跟踪 following 级状态（`pending|in_progress|success|warning|failed`）
+  - `collect` 新增 `--resume-run-id`，可在同一 run 上继续未完成 following
+  - 采集中断/失败后保留可恢复状态，并写入 run 结束状态
+- 新增重试可见性升级：
+  - API 重试仍写日志
+  - 重试摘要会通过 CLI 回调打印到终端
+- 新增测试覆盖：
+  - 并发采集行为
+  - 失败 run 的续跑路径
+  - `run_followings` 检查点生命周期
+  - official/socialdata 客户端重试回调输出
+- 已在 `XReporter` 环境执行全量测试（并发/续跑/重试输出改造后）：**41 项通过**。
+
+- 新增运行时可观测性升级：
+  - 统一滚动日志文件（`$XREPORTER_HOME/logs/xreporter.log`）
+  - `config/collect/render/doctor` 命令级生命周期日志
+  - official/socialdata 适配层请求/重试/回退/失败日志
+  - run/storage 关键节点日志（run 创建/结束、warning 落库、batch 持久化）
+  - 新增日志初始化与请求重试日志测试覆盖
+- 新增分页安全保护：
+  - 当 cursor/token 重复时中断 timeline/followings 分页循环
+  - 记录重复 cursor 告警日志，避免采集无界循环
+  - 新增 SocialData 重复 cursor 时间线测试
 - 优化静态 HTML 报告布局：
   - 新增 run 摘要仪表区（元数据 + 计数）
   - 改进聚合区/时间线/告警卡片可读性与响应式表现

@@ -34,7 +34,7 @@ def test_build_official_provider(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     called: dict[str, str] = {}
 
     class DummyOfficial:
-        def __init__(self, token: str) -> None:
+        def __init__(self, token: str, retry_callback=None) -> None:  # type: ignore[no-untyped-def]
             called["token"] = token
 
     monkeypatch.delenv("XREPORTER_FIXTURE_FILE", raising=False)
@@ -51,7 +51,7 @@ def test_build_socialdata_provider(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
     called: dict[str, str] = {}
 
     class DummySocialData:
-        def __init__(self, token: str) -> None:
+        def __init__(self, token: str, retry_callback=None) -> None:  # type: ignore[no-untyped-def]
             called["token"] = token
 
     monkeypatch.delenv("XREPORTER_FIXTURE_FILE", raising=False)

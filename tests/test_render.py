@@ -32,6 +32,8 @@ def test_render_report_includes_red_warning_block(tmp_path: Path) -> None:
 
     assert "Collection Warnings" in content
     assert "warning-card" in content
+    assert '<details id="warnings" class="card collapsible">' in content
+    assert 'id="warnings" class="card collapsible" open' not in content
     assert "--danger: #b42318;" in content
     assert "locked_user" in content
     assert "https://x.com/i/web/status/123" in content
@@ -81,10 +83,12 @@ def test_render_report_zh_localized_content(tmp_path: Path) -> None:
     assert '<details id="grouped" class="card collapsible">' in content
     assert '<details id="user-grouped" class="card collapsible">' in content
     assert '<details id="timeline" class="card collapsible">' in content
+    assert '<details id="warnings" class="card collapsible">' in content
     assert '<details class="group-card item-collapsible">' in content
     assert '<details class="user-card item-collapsible">' in content
     assert '<details class="group-card item-collapsible" open>' not in content
     assert '<details class="user-card item-collapsible" open>' not in content
+    assert 'id="warnings" class="card collapsible" open' not in content
     assert 'id="grouped" class="card collapsible" open' not in content
     assert 'id="user-grouped" class="card collapsible" open' not in content
     assert 'id="timeline" class="card collapsible" open' not in content

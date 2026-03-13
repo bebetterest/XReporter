@@ -25,6 +25,7 @@ Current version: `0.1.0` (MVI)
 - [Technical Route At A Glance](#technical-route-at-a-glance)
 - [CLI Reference](#cli-reference)
 - [Configuration](#configuration)
+- [Logging](#logging)
 - [Repository Map](#repository-map)
 - [Development And Testing](#development-and-testing)
 - [Troubleshooting](#troubleshooting)
@@ -94,7 +95,7 @@ Interaction and ordering rules:
 
 ```text
 CLI (Typer + Rich)
-  -> Config + i18n
+  -> Config + i18n + logging bootstrap
   -> CollectorService
        -> provider adapter (XApiClient / SocialDataApiClient / FixtureXApiClient)
        -> normalizer
@@ -108,7 +109,7 @@ Detailed route: [doc/tech_route.md](./doc/tech_route.md) | [中文](./doc/tech_r
 
 1. `xreporter config init --username <name> [--lang auto|en|zh] [--db-path <path>] [--report-dir <path>] [--following-cap <int>] [--include-replies/--no-include-replies] [--api-provider official|socialdata]`
 2. `xreporter config show`
-3. `xreporter collect [--username <name>] [--last 12h|24h | --since <ISO8601> --until <ISO8601>] [--following-cap <int>] [--include-replies/--no-include-replies]`
+3. `xreporter collect [--username <name>] [--last 12h|24h | --since <ISO8601> --until <ISO8601>] [--following-cap <int>] [--include-replies/--no-include-replies] [--api-concurrency <int>] [--resume-run-id <id>]`
 4. `xreporter render [--run-id <id> | --latest] [--output <html_path>]`
 5. `xreporter doctor`
 
@@ -119,13 +120,16 @@ Detailed route: [doc/tech_route.md](./doc/tech_route.md) | [中文](./doc/tech_r
 xreporter config init --username jack --lang auto --following-cap 200
 
 # 2) collect one window
-xreporter collect --last 24h
+xreporter collect --last 24h --api-concurrency 4
 
 # 3) render latest run
 xreporter render --latest
 
 # 4) or render a specific run
 xreporter render --run-id 3 --output ./reports/manual_run_3.html
+
+# 5) resume an interrupted/failed run
+xreporter collect --resume-run-id 3 --api-concurrency 4
 ```
 
 ## Configuration
@@ -144,6 +148,16 @@ Config fields:
 - `include_replies_default` (bool, default `true`)
 - `api_provider` (`official|socialdata`; missing legacy field defaults to `official`)
 
+## Logging
+
+- Default log file: `~/.xreporter/logs/xreporter.log`
+- If `XREPORTER_HOME` is set, log path becomes `$XREPORTER_HOME/logs/xreporter.log`.
+- Log includes command lifecycle, run-level collection progress, API request/retry/fallback status, and storage commit markers.
+- Retried API calls are both logged and printed to terminal (safe summary only, no secrets).
+- Optional env vars:
+  - `XREPORTER_LOG_LEVEL` (`DEBUG|INFO|WARNING|ERROR`, default `INFO`)
+  - `XREPORTER_LOG_STDERR` (`1|true|yes|on`) to mirror logs to stderr
+
 ## Provider Notes
 
 - `official`
@@ -152,9 +166,16 @@ Config fields:
   - Can face strong cost/rate-limit pressure depending on access tier.
 - `socialdata`
   - Requires `SOCIALDATA_API_KEY`.
-  - Adapter handles endpoint fallback + schema normalization.
+  - Adapter aligns to documented endpoints/params and avoids unsupported filters.
+  - Referenced tweet backfill uses batch endpoint (`tweets-by-ids`) to reduce request count.
   - Timeline `403` privacy responses are recorded as warnings and skipped.
   - Full production validation in this repo is still pending.
+- Timeline page cap (anti-waste)
+  - Per-following timeline collection is capped at **5 pages** by default (both `official` and `socialdata` providers).
+  - This is currently a code-level parameter (not a CLI flag).
+  - To modify it, edit:
+    - `src/xreporter/x_api.py` -> `XApiClient.__init__(..., max_timeline_pages=5)`
+    - `src/xreporter/x_api.py` -> `SocialDataApiClient.__init__(..., max_timeline_pages=5)`
 - `fixture`
   - Set `XREPORTER_FIXTURE_FILE` to run offline demos/tests without real API calls.
 
@@ -172,6 +193,7 @@ src/xreporter/
   cli.py        # command interface and orchestration
   config.py     # config load/save/default paths
   i18n.py       # language resolution and message catalog
+  logging_utils.py # runtime logging setup (file rotation + level control)
   models.py     # typed data contracts
   normalizer.py # payload -> normalized batch
   service.py    # collect workflow and warning handling
@@ -212,6 +234,25 @@ Coverage focus:
 ```bash
 xreporter render --run-id <id> --output ./reports/run_<id>.html
 ```
+
+### Need request/run diagnostics
+
+- Check `~/.xreporter/logs/xreporter.log` (or `$XREPORTER_HOME/logs/xreporter.log`).
+- Set `XREPORTER_LOG_LEVEL=DEBUG` to capture per-request retry/fallback details.
+
+### Collect runs too long
+
+- New pagination safeguards stop repeated cursor/token loops automatically and write warning logs.
+- Per-following timeline pagination also has a hard cap of `5` pages by default (see `max_timeline_pages` in `src/xreporter/x_api.py`).
+- Increase API parallelism when your quota allows:
+  - `xreporter collect --last 24h --api-concurrency 8`
+- If runtime is still long, reduce collection scope temporarily:
+  - `xreporter collect --last 12h --following-cap 100 --no-include-replies`
+
+### Collection interrupted midway
+
+- Resume the same run without reprocessing completed followings:
+  - `xreporter collect --resume-run-id <id> --api-concurrency 4`
 
 ### Language does not match expectation
 

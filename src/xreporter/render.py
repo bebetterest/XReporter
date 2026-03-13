@@ -665,7 +665,7 @@ def render_report(
     .wrap {{
       max-width: 1180px;
       margin: 0 auto;
-      padding: 28px 16px 40px;
+      padding: 28px 16px 96px;
     }}
     .card {{
       background: var(--paper);
@@ -1034,7 +1034,7 @@ def render_report(
     }}
     @media (max-width: 520px) {{
       .wrap {{
-        padding: 18px 12px 28px;
+        padding: 18px 12px 72px;
       }}
       .card {{
         padding: 14px;
@@ -1063,13 +1063,18 @@ def render_report(
       </p>
     </section>
 
-    <section id=\"warnings\" class=\"card\">
-      <div class=\"section-head\">
+    <details id=\"warnings\" class=\"card collapsible\">
+      <summary class=\"section-head\">
         <h2>{escape(text['warnings'])}</h2>
-        <span class=\"pill\">{escape(str(len(warning_rows)))}</span>
+        <span class=\"section-right\">
+          <span class=\"pill\">{escape(str(len(warning_rows)))}</span>
+          <span class=\"toggle-hint\"><span class=\"toggle-icon\">▸</span>{escape(text['toggle_hint'])}</span>
+        </span>
+      </summary>
+      <div class=\"collapsible-content\">
+        {warnings_html}
       </div>
-      {warnings_html}
-    </section>
+    </details>
 
     <details id=\"grouped\" class=\"card collapsible\">
       <summary class=\"section-head\">

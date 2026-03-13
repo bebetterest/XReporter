@@ -175,3 +175,55 @@ def test_run_warnings_persist_and_query(tmp_path) -> None:
     assert storage.count_rows("run_warnings") == 1
 
     storage.close()
+
+
+def test_run_followings_checkpoint_status_flow(tmp_path) -> None:
+    db_path = tmp_path / "xreporter.db"
+    storage = SQLiteStorage(db_path)
+    storage.init_schema()
+
+    time_range = TimeRange(
+        since=datetime(2026, 3, 10, 0, 0, tzinfo=timezone.utc),
+        until=datetime(2026, 3, 10, 2, 0, tzinfo=timezone.utc),
+    )
+    run_id = storage.create_run(
+        username="target",
+        target_user_id="100",
+        api_provider="official",
+        time_range=time_range,
+        include_replies=True,
+        following_cap=10,
+    )
+
+    total = storage.init_run_followings(
+        run_id,
+        [
+            {"id": "200", "username": "u200"},
+            {"id": "201", "username": "u201"},
+            {"id": "202", "username": "u202"},
+        ],
+    )
+    assert total == 3
+    assert storage.count_rows("run_followings") == 3
+
+    initial_pending = storage.get_pending_run_followings(run_id)
+    assert [item["id"] for item in initial_pending] == ["200", "201", "202"]
+
+    storage.mark_run_following_in_progress(run_id, "200")
+    storage.mark_run_following_success(run_id, "200", 2)
+    storage.mark_run_following_warning(run_id, "201", "privacy")
+    storage.mark_run_following_failed(run_id, "202", "network")
+
+    all_rows = storage.get_run_followings(run_id)
+    by_id = {row["id"]: row for row in all_rows}
+    assert by_id["200"]["status"] == "success"
+    assert by_id["200"]["activities_count"] == 2
+    assert by_id["201"]["status"] == "warning"
+    assert by_id["201"]["warning_count"] == 1
+    assert by_id["202"]["status"] == "failed"
+    assert by_id["202"]["error_message"] == "network"
+
+    pending_after = storage.get_pending_run_followings(run_id)
+    assert [item["id"] for item in pending_after] == ["202"]
+
+    storage.close()

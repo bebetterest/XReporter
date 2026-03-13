@@ -5,4 +5,3 @@ report_dir = "/Users/hobeter/Desktop/code/XReporter/.xreporter-local/reports"
 following_cap_default = 500
 include_replies_default = true
 api_provider = "socialdata"
-twscrape_accounts_db_path = "/Users/hobeter/Desktop/code/XReporter/.xreporter-local/twscrape_accounts.db"

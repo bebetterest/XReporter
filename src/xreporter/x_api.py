@@ -6,10 +6,11 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 import httpx
 
+from xreporter.logging_utils import get_logger
 from xreporter.models import TimeRange
 
 
@@ -21,6 +22,22 @@ TWEET_FIELDS = (
     "public_metrics,entities,in_reply_to_user_id"
 )
 EXPANSIONS = "author_id,referenced_tweets.id,referenced_tweets.id.author_id"
+
+
+def _compact_json(data: dict[str, Any] | None, *, limit: int = 500) -> str:
+    if not data:
+        return "-"
+    raw = json.dumps(data, ensure_ascii=False, sort_keys=True)
+    if len(raw) <= limit:
+        return raw
+    return f"{raw[:limit]}..."
+
+
+def _compact_text(data: str, *, limit: int = 300) -> str:
+    collapsed = " ".join(data.split())
+    if len(collapsed) <= limit:
+        return collapsed
+    return f"{collapsed[:limit]}..."
 
 
 class XApiError(RuntimeError):
@@ -78,15 +95,23 @@ class XApiClient:
         base_url: str = DEFAULT_BASE_URL,
         timeout: float = 30.0,
         max_retries: int = 5,
+        max_timeline_pages: int = 5,
         sleep_func=time.sleep,
         random_func=random.random,
+        retry_callback: Callable[[str], None] | None = None,
     ) -> None:
         if not token:
             raise ValueError("X_BEARER_TOKEN is required")
+        if max_timeline_pages <= 0:
+            raise ValueError("max_timeline_pages must be > 0")
 
+        self._provider = "official"
+        self._logger = get_logger("api.official")
         self._max_retries = max_retries
+        self._max_timeline_pages = max_timeline_pages
         self._sleep = sleep_func
         self._random = random_func
+        self._retry_callback = retry_callback
         self._client = client or httpx.Client(
             base_url=base_url,
             timeout=timeout,
@@ -105,24 +130,85 @@ class XApiClient:
     def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[no-untyped-def]
         self.close()
 
+    def _notify_retry(self, message: str) -> None:
+        if self._retry_callback is None:
+            return
+        try:
+            self._retry_callback(message)
+        except Exception:
+            self._logger.debug("retry callback failed provider=%s", self._provider, exc_info=True)
+
     def _request_json(self, method: str, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         attempts = 0
         while True:
+            attempt = attempts + 1
+            started_at = time.perf_counter()
+            self._logger.debug(
+                "request start provider=%s method=%s path=%s attempt=%d params=%s",
+                self._provider,
+                method,
+                path,
+                attempt,
+                _compact_json(params),
+            )
             try:
                 response = self._client.request(method, path, params=params)
             except httpx.HTTPError as exc:
                 if attempts >= self._max_retries:
+                    self._logger.error(
+                        "request network_error exhausted provider=%s method=%s path=%s attempt=%d error=%s",
+                        self._provider,
+                        method,
+                        path,
+                        attempt,
+                        exc,
+                    )
                     raise XApiError(f"Network error after retries: {exc}") from exc
                 delay = min(2**attempts, 30) + self._random()
+                self._logger.warning(
+                    "request network_error retry provider=%s method=%s path=%s attempt=%d/%d delay=%.2f error=%s",
+                    self._provider,
+                    method,
+                    path,
+                    attempt,
+                    self._max_retries + 1,
+                    delay,
+                    exc,
+                )
+                self._notify_retry(
+                    "[retry] "
+                    f"provider={self._provider} method={method} path={path} attempt={attempt}/{self._max_retries + 1} "
+                    f"reason=network_error wait={delay:.2f}s"
+                )
                 self._sleep(delay)
                 attempts += 1
                 continue
 
+            elapsed_ms = (time.perf_counter() - started_at) * 1000
             if response.status_code < 400:
+                self._logger.info(
+                    "request ok provider=%s method=%s path=%s status=%d attempt=%d elapsed_ms=%.1f",
+                    self._provider,
+                    method,
+                    path,
+                    response.status_code,
+                    attempt,
+                    elapsed_ms,
+                )
                 return response.json()
 
             retriable = response.status_code == 429 or response.status_code >= 500
             if not retriable or attempts >= self._max_retries:
+                self._logger.error(
+                    "request failed provider=%s method=%s path=%s status=%d attempt=%d elapsed_ms=%.1f body=%s",
+                    self._provider,
+                    method,
+                    path,
+                    response.status_code,
+                    attempt,
+                    elapsed_ms,
+                    _compact_text(response.text),
+                )
                 raise ApiRequestError(
                     provider="official",
                     status_code=response.status_code,
@@ -137,6 +223,22 @@ class XApiClient:
             else:
                 delay = min(2**attempts, 30) + self._random()
 
+            self._logger.warning(
+                "request retry provider=%s method=%s path=%s status=%d attempt=%d/%d delay=%.2f body=%s",
+                self._provider,
+                method,
+                path,
+                response.status_code,
+                attempt,
+                self._max_retries + 1,
+                delay,
+                _compact_text(response.text, limit=120),
+            )
+            self._notify_retry(
+                "[retry] "
+                f"provider={self._provider} method={method} path={path} status={response.status_code} "
+                f"attempt={attempt}/{self._max_retries + 1} wait={delay:.2f}s"
+            )
             self._sleep(delay)
             attempts += 1
 
@@ -161,10 +263,11 @@ class XApiClient:
 
         followings: list[dict[str, Any]] = []
         pagination_token: str | None = None
+        seen_tokens: set[str] = set()
 
         while len(followings) < limit:
             remaining = limit - len(followings)
-            max_results = min(1000, max(10, remaining))
+            max_results = min(1000, remaining)
             params: dict[str, Any] = {
                 "max_results": max_results,
                 "user.fields": USER_FIELDS,
@@ -178,9 +281,20 @@ class XApiClient:
                 break
             followings.extend(data)
 
-            pagination_token = payload.get("meta", {}).get("next_token")
-            if not pagination_token:
+            next_token = payload.get("meta", {}).get("next_token")
+            if not next_token:
                 break
+            next_token = str(next_token)
+            if next_token in seen_tokens:
+                self._logger.warning(
+                    "pagination token repeated provider=%s endpoint=followings user_id=%s token=%s",
+                    self._provider,
+                    user_id,
+                    next_token,
+                )
+                break
+            seen_tokens.add(next_token)
+            pagination_token = next_token
 
         return followings[:limit]
 
@@ -222,7 +336,21 @@ class XApiClient:
         include_tweets: dict[str, dict[str, Any]] = {}
 
         pagination_token: str | None = None
+        seen_tokens: set[str] = set()
+        page_count = 0
         while True:
+            page_count += 1
+            if page_count > self._max_timeline_pages:
+                self._logger.warning(
+                    "timeline page cap reached provider=%s user_id=%s max_pages=%d since=%s until=%s",
+                    self._provider,
+                    user_id,
+                    self._max_timeline_pages,
+                    time_range.since.isoformat(),
+                    time_range.until.isoformat(),
+                )
+                break
+
             params: dict[str, Any] = {
                 "max_results": 100,
                 "start_time": self._as_utc_iso(time_range.since),
@@ -237,9 +365,13 @@ class XApiClient:
                 params["pagination_token"] = pagination_token
 
             payload = self._request_json("GET", f"/users/{user_id}/tweets", params=params)
+            page_created_times: list[datetime] = []
 
             for item in payload.get("data", []):
                 tweets[item["id"]] = item
+                created_at = _parse_created_at(item.get("created_at"))
+                if created_at is not None:
+                    page_created_times.append(created_at)
 
             includes = payload.get("includes", {})
             for item in includes.get("users", []):
@@ -247,9 +379,32 @@ class XApiClient:
             for item in includes.get("tweets", []):
                 include_tweets[item["id"]] = item
 
-            pagination_token = payload.get("meta", {}).get("next_token")
-            if not pagination_token:
+            # API timelines are expected newest-first. Once a page is entirely older than `since`,
+            # the remaining pages are also outside the requested window.
+            if page_created_times and max(page_created_times) < time_range.since:
+                self._logger.info(
+                    "timeline reached lower bound provider=%s user_id=%s page_newest=%s since=%s",
+                    self._provider,
+                    user_id,
+                    max(page_created_times).isoformat(),
+                    time_range.since.isoformat(),
+                )
                 break
+
+            next_token = payload.get("meta", {}).get("next_token")
+            if not next_token:
+                break
+            next_token = str(next_token)
+            if next_token in seen_tokens:
+                self._logger.warning(
+                    "pagination token repeated provider=%s endpoint=timeline user_id=%s token=%s",
+                    self._provider,
+                    user_id,
+                    next_token,
+                )
+                break
+            seen_tokens.add(next_token)
+            pagination_token = next_token
 
         unresolved_ids: list[str] = []
         for item in tweets.values():
@@ -283,15 +438,27 @@ class SocialDataApiClient:
         base_url: str = DEFAULT_SOCIALDATA_BASE_URL,
         timeout: float = 30.0,
         max_retries: int = 5,
+        max_timeline_pages: int = 5,
+        max_stale_old_pages: int = 3,
         sleep_func=time.sleep,
         random_func=random.random,
+        retry_callback: Callable[[str], None] | None = None,
     ) -> None:
         if not token:
             raise ValueError("SOCIALDATA_API_KEY is required")
+        if max_timeline_pages <= 0:
+            raise ValueError("max_timeline_pages must be > 0")
+        if max_stale_old_pages <= 0:
+            raise ValueError("max_stale_old_pages must be > 0")
 
+        self._provider = "socialdata"
+        self._logger = get_logger("api.socialdata")
         self._max_retries = max_retries
+        self._max_timeline_pages = max_timeline_pages
+        self._max_stale_old_pages = max_stale_old_pages
         self._sleep = sleep_func
         self._random = random_func
+        self._retry_callback = retry_callback
         self._client = client or httpx.Client(
             base_url=base_url,
             timeout=timeout,
@@ -310,34 +477,106 @@ class SocialDataApiClient:
     def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[no-untyped-def]
         self.close()
 
+    def _notify_retry(self, message: str) -> None:
+        if self._retry_callback is None:
+            return
+        try:
+            self._retry_callback(message)
+        except Exception:
+            self._logger.debug("retry callback failed provider=%s", self._provider, exc_info=True)
+
     def _request_json(
         self,
         method: str,
         path: str,
         params: dict[str, Any] | None = None,
+        json_body: dict[str, Any] | None = None,
         *,
         allow_not_found: bool = False,
     ) -> dict[str, Any] | None:
         attempts = 0
         while True:
+            attempt = attempts + 1
+            started_at = time.perf_counter()
+            self._logger.debug(
+                "request start provider=%s method=%s path=%s attempt=%d allow_not_found=%s params=%s body=%s",
+                self._provider,
+                method,
+                path,
+                attempt,
+                allow_not_found,
+                _compact_json(params),
+                _compact_json(json_body),
+            )
             try:
-                response = self._client.request(method, path, params=params)
+                response = self._client.request(method, path, params=params, json=json_body)
             except httpx.HTTPError as exc:
                 if attempts >= self._max_retries:
+                    self._logger.error(
+                        "request network_error exhausted provider=%s method=%s path=%s attempt=%d error=%s",
+                        self._provider,
+                        method,
+                        path,
+                        attempt,
+                        exc,
+                    )
                     raise XApiError(f"Network error after retries: {exc}") from exc
                 delay = min(2**attempts, 30) + self._random()
+                self._logger.warning(
+                    "request network_error retry provider=%s method=%s path=%s attempt=%d/%d delay=%.2f error=%s",
+                    self._provider,
+                    method,
+                    path,
+                    attempt,
+                    self._max_retries + 1,
+                    delay,
+                    exc,
+                )
+                self._notify_retry(
+                    "[retry] "
+                    f"provider={self._provider} method={method} path={path} attempt={attempt}/{self._max_retries + 1} "
+                    f"reason=network_error wait={delay:.2f}s"
+                )
                 self._sleep(delay)
                 attempts += 1
                 continue
 
+            elapsed_ms = (time.perf_counter() - started_at) * 1000
             if response.status_code < 400:
+                self._logger.info(
+                    "request ok provider=%s method=%s path=%s status=%d attempt=%d elapsed_ms=%.1f",
+                    self._provider,
+                    method,
+                    path,
+                    response.status_code,
+                    attempt,
+                    elapsed_ms,
+                )
                 return response.json()
 
             if response.status_code == 404 and allow_not_found:
+                self._logger.info(
+                    "request not_found provider=%s method=%s path=%s attempt=%d elapsed_ms=%.1f",
+                    self._provider,
+                    method,
+                    path,
+                    attempt,
+                    elapsed_ms,
+                )
                 return None
 
             retriable = response.status_code == 429 or response.status_code >= 500
             if not retriable or attempts >= self._max_retries:
+                self._logger.error(
+                    "request failed provider=%s method=%s path=%s status=%d attempt=%d elapsed_ms=%.1f body=%s",
+                    self._provider,
+                    method,
+                    path,
+                    response.status_code,
+                    attempt,
+                    elapsed_ms,
+                    _compact_text(response.text),
+                )
                 raise ApiRequestError(
                     provider="socialdata",
                     status_code=response.status_code,
@@ -352,28 +591,29 @@ class SocialDataApiClient:
             else:
                 delay = min(2**attempts, 30) + self._random()
 
+            self._logger.warning(
+                "request retry provider=%s method=%s path=%s status=%d attempt=%d/%d delay=%.2f body=%s",
+                self._provider,
+                method,
+                path,
+                response.status_code,
+                attempt,
+                self._max_retries + 1,
+                delay,
+                _compact_text(response.text, limit=120),
+            )
+            self._notify_retry(
+                "[retry] "
+                f"provider={self._provider} method={method} path={path} status={response.status_code} "
+                f"attempt={attempt}/{self._max_retries + 1} wait={delay:.2f}s"
+            )
             self._sleep(delay)
             attempts += 1
 
-    def _request_json_with_fallbacks(
-        self,
-        method: str,
-        path_with_params: list[tuple[str, dict[str, Any] | None]],
-    ) -> dict[str, Any]:
-        for i, (path, params) in enumerate(path_with_params):
-            payload = self._request_json(method, path, params=params, allow_not_found=i < len(path_with_params) - 1)
-            if payload is not None:
-                return payload
-        raise XApiError("SocialData request failed: no fallback endpoint resolved")
-
     def get_user_by_username(self, username: str) -> dict[str, Any]:
-        payload = self._request_json_with_fallbacks(
-            "GET",
-            [
-                (f"/twitter/user/{username}", None),
-                ("/twitter/user/profile", {"username": username}),
-            ],
-        )
+        payload = self._request_json("GET", f"/twitter/user/{username}")
+        if payload is None:
+            raise XApiError(f"User not found: {username}")
         user_item = _extract_single_item(payload)
         user = _normalize_social_user(user_item)
         if not user:
@@ -386,20 +626,16 @@ class SocialDataApiClient:
 
         followings: list[dict[str, Any]] = []
         cursor: str | None = None
+        seen_cursors: set[str] = set()
 
         while len(followings) < limit:
-            remaining = limit - len(followings)
-            params: dict[str, Any] = {"limit": min(remaining, 100)}
+            params: dict[str, Any] = {"user_id": user_id}
             if cursor:
                 params["cursor"] = cursor
 
-            payload = self._request_json_with_fallbacks(
-                "GET",
-                [
-                    (f"/twitter/user/{user_id}/following", params),
-                    (f"/twitter/user/{user_id}/followings", params),
-                ],
-            )
+            payload = self._request_json("GET", "/twitter/friends/list", params=params)
+            if payload is None:
+                break
             items = _extract_items(payload)
             if not items:
                 break
@@ -411,35 +647,48 @@ class SocialDataApiClient:
                     if len(followings) >= limit:
                         break
 
-            cursor = _extract_next_cursor(payload)
-            if not cursor:
+            next_cursor = _extract_next_cursor(payload)
+            if not next_cursor:
                 break
+            next_cursor = str(next_cursor)
+            if next_cursor in seen_cursors:
+                self._logger.warning(
+                    "pagination token repeated provider=%s endpoint=followings user_id=%s token=%s",
+                    self._provider,
+                    user_id,
+                    next_cursor,
+                )
+                break
+            seen_cursors.add(next_cursor)
+            cursor = next_cursor
 
         return followings[:limit]
 
     def get_tweets_by_ids(self, tweet_ids: list[str]) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
         tweet_map: dict[str, dict[str, Any]] = {}
         user_map: dict[str, dict[str, Any]] = {}
+        if not tweet_ids:
+            return tweet_map, user_map
 
-        for tweet_id in tweet_ids:
-            payload = self._request_json("GET", f"/twitter/tweet/{tweet_id}", allow_not_found=True)
-            if payload is None:
-                payload = self._request_json("GET", f"/twitter/tweets/{tweet_id}", allow_not_found=True)
+        for i in range(0, len(tweet_ids), 100):
+            chunk = tweet_ids[i : i + 100]
+            payload = self._request_json(
+                "POST",
+                "/twitter/tweets-by-ids",
+                json_body={"ids": chunk},
+            )
             if payload is None:
                 continue
-            tweet_item = _extract_single_item(payload)
-            tweet = _normalize_social_tweet(tweet_item)
-            if not tweet:
-                continue
-            tweet_map[tweet["id"]] = tweet
 
-            nested_user = _extract_nested_user(tweet_item)
-            if nested_user:
-                user_map[nested_user["id"]] = nested_user
-            elif tweet.get("author_id"):
-                author = _normalize_social_user(_extract_author_from_payload(payload))
-                if author:
-                    user_map[author["id"]] = author
+            for item in _extract_items(payload):
+                tweet = _normalize_social_tweet(item)
+                if not tweet:
+                    continue
+                tweet_map[tweet["id"]] = tweet
+
+                nested_user = _extract_nested_user(item)
+                if nested_user:
+                    user_map[nested_user["id"]] = nested_user
 
             for include_user in _extract_include_users(payload):
                 user_map[include_user["id"]] = include_user
@@ -459,23 +708,32 @@ class SocialDataApiClient:
         include_tweets: dict[str, dict[str, Any]] = {}
 
         cursor: str | None = None
+        seen_cursors: set[str] = set()
+        page_count = 0
+        stale_old_pages = 0
         while True:
-            params: dict[str, Any] = {"limit": 100}
+            page_count += 1
+            if page_count > self._max_timeline_pages:
+                self._logger.warning(
+                    "timeline page cap reached provider=%s user_id=%s max_pages=%d since=%s until=%s",
+                    self._provider,
+                    user_id,
+                    self._max_timeline_pages,
+                    time_range.since.isoformat(),
+                    time_range.until.isoformat(),
+                )
+                break
+
+            params: dict[str, Any] = {}
             if cursor:
                 params["cursor"] = cursor
 
-            path_candidates = [
-                (
-                    f"/twitter/user/{user_id}/tweets-and-replies"
-                    if include_replies
-                    else f"/twitter/user/{user_id}/tweets",
-                    params,
-                )
-            ]
-            if include_replies:
-                path_candidates.append((f"/twitter/user/{user_id}/tweets", params))
-
-            payload = self._request_json_with_fallbacks("GET", path_candidates)
+            path = f"/twitter/user/{user_id}/tweets-and-replies" if include_replies else f"/twitter/user/{user_id}/tweets"
+            payload = self._request_json("GET", path, params=params)
+            if payload is None:
+                break
+            page_created_times: list[datetime] = []
+            page_new_in_range = 0
 
             for item in _extract_items(payload):
                 tweet = _normalize_social_tweet(item)
@@ -483,11 +741,15 @@ class SocialDataApiClient:
                     continue
 
                 created_at = _parse_created_at(tweet.get("created_at"))
+                if created_at is not None:
+                    page_created_times.append(created_at)
                 if created_at and (created_at < time_range.since or created_at > time_range.until):
                     continue
                 if not include_replies and _is_reply(tweet):
                     continue
 
+                if tweet["id"] not in tweets:
+                    page_new_in_range += 1
                 tweets[tweet["id"]] = tweet
 
                 nested_user = _extract_nested_user(item)
@@ -499,9 +761,52 @@ class SocialDataApiClient:
             for include_tweet in _extract_include_tweets(payload):
                 include_tweets[include_tweet["id"]] = include_tweet
 
-            cursor = _extract_next_cursor(payload)
-            if not cursor:
+            # SocialData timeline pages are expected newest-first. If even the newest tweet in
+            # this page is older than `since`, all following pages are out of range.
+            if page_created_times and max(page_created_times) < time_range.since:
+                self._logger.info(
+                    "timeline reached lower bound provider=%s user_id=%s page_newest=%s since=%s",
+                    self._provider,
+                    user_id,
+                    max(page_created_times).isoformat(),
+                    time_range.since.isoformat(),
+                )
                 break
+
+            # Some timelines keep repeating a fresh pinned/recent item while the rest of
+            # the page has moved older than the window. Stop after several stale pages.
+            if page_created_times:
+                page_oldest = min(page_created_times)
+                if page_oldest < time_range.since and page_new_in_range == 0:
+                    stale_old_pages += 1
+                else:
+                    stale_old_pages = 0
+                if stale_old_pages >= self._max_stale_old_pages:
+                    self._logger.warning(
+                        "timeline stale-old-page cap reached provider=%s user_id=%s stale_pages=%d "
+                        "page_oldest=%s since=%s",
+                        self._provider,
+                        user_id,
+                        stale_old_pages,
+                        page_oldest.isoformat(),
+                        time_range.since.isoformat(),
+                    )
+                    break
+
+            next_cursor = _extract_next_cursor(payload)
+            if not next_cursor:
+                break
+            next_cursor = str(next_cursor)
+            if next_cursor in seen_cursors:
+                self._logger.warning(
+                    "pagination token repeated provider=%s endpoint=timeline user_id=%s token=%s",
+                    self._provider,
+                    user_id,
+                    next_cursor,
+                )
+                break
+            seen_cursors.add(next_cursor)
+            cursor = next_cursor
 
         unresolved_ids: list[str] = []
         for item in tweets.values():
@@ -710,6 +1015,21 @@ def _normalize_public_metrics(metrics: Any) -> dict[str, int]:
     }
 
 
+def _normalize_user_public_metrics(item: dict[str, Any]) -> dict[str, int]:
+    metrics = item.get("public_metrics")
+    if not isinstance(metrics, dict):
+        metrics = {}
+    return {
+        "followers_count": int(_pick(metrics, "followers_count", "followersCount", "followers") or 0),
+        "following_count": int(
+            _pick(metrics, "following_count", "followingCount", "friends_count", "friendsCount", "following")
+            or 0
+        ),
+        "tweet_count": int(_pick(metrics, "tweet_count", "tweetCount", "statuses_count", "statusesCount") or 0),
+        "listed_count": int(_pick(metrics, "listed_count", "listedCount") or 0),
+    }
+
+
 def _extract_links(item: dict[str, Any]) -> list[dict[str, str]]:
     urls: list[str] = []
     entities = item.get("entities")
@@ -745,14 +1065,15 @@ def _normalize_social_user(item: dict[str, Any]) -> dict[str, Any] | None:
 
     username = _pick(item, "username", "screen_name", "screenName", "handle")
     name = _pick(item, "name", "display_name", "displayName", "full_name")
-    metrics = _normalize_public_metrics(
-        _pick(item, "public_metrics")
-        or {
-            "followers_count": _pick(item, "followers_count", "followersCount"),
-            "following_count": _pick(item, "following_count", "friends_count", "friendsCount"),
-            "tweet_count": _pick(item, "statuses_count", "tweet_count", "tweetCount"),
-        }
-    )
+    metrics = _normalize_user_public_metrics(item)
+    if metrics["followers_count"] == 0:
+        metrics["followers_count"] = int(_pick(item, "followers_count", "followersCount", "followers") or 0)
+    if metrics["following_count"] == 0:
+        metrics["following_count"] = int(
+            _pick(item, "following_count", "followingCount", "friends_count", "friendsCount", "following") or 0
+        )
+    if metrics["tweet_count"] == 0:
+        metrics["tweet_count"] = int(_pick(item, "statuses_count", "statusesCount", "tweet_count", "tweetCount") or 0)
 
     return {
         "id": str(user_id),
@@ -803,7 +1124,7 @@ def _normalize_social_tweet(item: dict[str, Any]) -> dict[str, Any] | None:
 
     author_id = _pick(item, "author_id", "authorId", "user_id", "userId", "user.id")
     text = _pick(item, "text", "full_text", "fullText", "rawContent", "content")
-    created_at = _to_iso8601(_pick(item, "created_at", "createdAt", "date"))
+    created_at = _to_iso8601(_pick(item, "created_at", "createdAt", "tweet_created_at", "date"))
 
     metrics = _normalize_public_metrics(
         _pick(item, "public_metrics", "stats")
@@ -907,7 +1228,26 @@ def _is_reply(tweet: dict[str, Any]) -> bool:
 def _parse_created_at(value: str | None) -> datetime | None:
     if not value:
         return None
+    raw = value.strip()
+    if not raw:
+        return None
+
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
+        return datetime.fromisoformat(raw.replace("Z", "+00:00")).astimezone(timezone.utc)
+    except ValueError:
+        pass
+
+    if raw.isdigit():
+        try:
+            unix = int(raw)
+            if unix > 10_000_000_000:
+                unix = unix // 1000
+            return datetime.fromtimestamp(unix, tz=timezone.utc)
+        except (OverflowError, ValueError):
+            pass
+
+    try:
+        parsed = datetime.strptime(raw, "%a %b %d %H:%M:%S %z %Y")
+        return parsed.astimezone(timezone.utc)
     except ValueError:
         return None

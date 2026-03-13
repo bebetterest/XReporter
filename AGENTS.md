@@ -17,9 +17,17 @@ This file defines the working principles for humans and agents in this repositor
   - `storage.py`: persistence, idempotency, and run-level warning records
   - `render.py`: report generation (timeline/grouping/warning sections)
   - `cli.py`: command interface and orchestration
+- `collect` reliability baseline:
+  - API timeline fetch supports configurable concurrency.
+  - Per-following checkpoint status is persisted for resume.
+  - Retry events are both logged and surfaced to terminal with safe summaries.
+- Provider adapter efficiency baseline:
+  - Keep request paths/params aligned with current official provider docs.
+  - Prefer batch fetch endpoints (when available) for referenced-object backfill.
 - Use typed Python and explicit data contracts where practical.
 - Avoid hidden global state; pass dependencies through constructors/functions.
 - Treat reruns as first-class: no duplicate core records.
+- Log run and request lifecycle with enough context for debugging; never log secrets or full credential values.
 - Run build, development, and test commands inside the conda environment named `XReporter` (`conda activate XReporter`).
 
 ## Testing Policy

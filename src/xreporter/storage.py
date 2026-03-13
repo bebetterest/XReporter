@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from xreporter.logging_utils import get_logger
 from xreporter.models import ActivityRecord, RunWarning, TimeRange, TweetRecord, UserRecord
 from xreporter.normalizer import NormalizedBatch
 
@@ -16,6 +17,7 @@ class SQLiteStorage:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(self.db_path)
         self._conn.row_factory = sqlite3.Row
+        self.logger = get_logger("storage.sqlite")
 
     def close(self) -> None:
         self._conn.close()
@@ -137,9 +139,24 @@ class SQLiteStorage:
                 FOREIGN KEY (run_id) REFERENCES runs(id)
             );
 
+            CREATE TABLE IF NOT EXISTS run_followings (
+                run_id INTEGER NOT NULL,
+                following_user_id TEXT NOT NULL,
+                following_username TEXT,
+                ordinal INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                activities_count INTEGER NOT NULL DEFAULT 0,
+                warning_count INTEGER NOT NULL DEFAULT 0,
+                error_message TEXT,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (run_id, following_user_id),
+                FOREIGN KEY (run_id) REFERENCES runs(id)
+            );
+
             CREATE INDEX IF NOT EXISTS idx_activities_event_created_at ON activities(event_created_at);
             CREATE INDEX IF NOT EXISTS idx_run_activities_run_id ON run_activities(run_id);
             CREATE INDEX IF NOT EXISTS idx_run_warnings_run_id ON run_warnings(run_id);
+            CREATE INDEX IF NOT EXISTS idx_run_followings_run_status ON run_followings(run_id, status, ordinal);
             """
         )
         if not self._column_exists("runs", "api_provider"):
@@ -188,7 +205,20 @@ class SQLiteStorage:
             ),
         )
         self._conn.commit()
-        return int(cursor.lastrowid)
+        run_id = int(cursor.lastrowid)
+        self.logger.info(
+            "create_run run_id=%d username=%s target_user_id=%s provider=%s since=%s until=%s "
+            "following_cap=%d include_replies=%s",
+            run_id,
+            username,
+            target_user_id,
+            api_provider,
+            self._to_iso(time_range.since),
+            self._to_iso(time_range.until),
+            following_cap,
+            include_replies,
+        )
+        return run_id
 
     def finish_run(
         self,
@@ -217,6 +247,167 @@ class SQLiteStorage:
                 self._utc_now_str(),
                 run_id,
             ),
+        )
+        self._conn.commit()
+        self.logger.info(
+            "finish_run run_id=%d status=%s total_followings=%d total_activities=%d has_error=%s",
+            run_id,
+            status,
+            total_followings,
+            total_activities,
+            bool(error_message),
+        )
+
+    def mark_run_running(self, run_id: int) -> None:
+        self._conn.execute(
+            """
+            UPDATE runs
+            SET status = 'running',
+                error_message = NULL,
+                finished_at = NULL
+            WHERE id = ?
+            """,
+            (run_id,),
+        )
+        self._conn.commit()
+        self.logger.info("mark_run_running run_id=%d", run_id)
+
+    def init_run_followings(self, run_id: int, followings: list[dict[str, Any]]) -> int:
+        seen_ids: set[str] = set()
+        updated_at = self._utc_now_str()
+        with self._conn:
+            for ordinal, following in enumerate(followings, start=1):
+                following_user_id = str(following.get("id", "") or "").strip()
+                if not following_user_id or following_user_id in seen_ids:
+                    continue
+                seen_ids.add(following_user_id)
+                following_username = str(following.get("username", "") or "").strip() or None
+                self._conn.execute(
+                    """
+                    INSERT INTO run_followings (
+                        run_id,
+                        following_user_id,
+                        following_username,
+                        ordinal,
+                        status,
+                        updated_at
+                    ) VALUES (?, ?, ?, ?, 'pending', ?)
+                    ON CONFLICT(run_id, following_user_id) DO UPDATE SET
+                        following_username = excluded.following_username,
+                        ordinal = excluded.ordinal,
+                        updated_at = excluded.updated_at
+                    """,
+                    (run_id, following_user_id, following_username, ordinal, updated_at),
+                )
+
+        total = self._conn.execute(
+            """
+            SELECT COUNT(*) AS c
+            FROM run_followings
+            WHERE run_id = ?
+            """,
+            (run_id,),
+        ).fetchone()
+        total_followings = int(total["c"]) if total else 0
+        self.logger.info("init_run_followings run_id=%d total=%d", run_id, total_followings)
+        return total_followings
+
+    def get_run_followings(self, run_id: int) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            """
+            SELECT
+                following_user_id AS id,
+                COALESCE(following_username, '') AS username,
+                ordinal,
+                status,
+                activities_count,
+                warning_count,
+                error_message
+            FROM run_followings
+            WHERE run_id = ?
+            ORDER BY ordinal ASC
+            """,
+            (run_id,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_pending_run_followings(self, run_id: int) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            """
+            SELECT
+                following_user_id AS id,
+                COALESCE(following_username, '') AS username,
+                ordinal,
+                status
+            FROM run_followings
+            WHERE run_id = ?
+              AND status IN ('pending', 'in_progress', 'failed')
+            ORDER BY ordinal ASC
+            """,
+            (run_id,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def mark_run_following_in_progress(self, run_id: int, following_user_id: str) -> None:
+        self._conn.execute(
+            """
+            UPDATE run_followings
+            SET status = 'in_progress',
+                error_message = NULL,
+                updated_at = ?
+            WHERE run_id = ?
+              AND following_user_id = ?
+            """,
+            (self._utc_now_str(), run_id, following_user_id),
+        )
+        self._conn.commit()
+
+    def mark_run_following_success(self, run_id: int, following_user_id: str, activities_count: int) -> None:
+        self._conn.execute(
+            """
+            UPDATE run_followings
+            SET status = 'success',
+                activities_count = ?,
+                error_message = NULL,
+                updated_at = ?
+            WHERE run_id = ?
+              AND following_user_id = ?
+            """,
+            (activities_count, self._utc_now_str(), run_id, following_user_id),
+        )
+        self._conn.commit()
+
+    def mark_run_following_warning(
+        self,
+        run_id: int,
+        following_user_id: str,
+        warning_message: str | None = None,
+    ) -> None:
+        self._conn.execute(
+            """
+            UPDATE run_followings
+            SET status = 'warning',
+                warning_count = warning_count + 1,
+                error_message = ?,
+                updated_at = ?
+            WHERE run_id = ?
+              AND following_user_id = ?
+            """,
+            (warning_message, self._utc_now_str(), run_id, following_user_id),
+        )
+        self._conn.commit()
+
+    def mark_run_following_failed(self, run_id: int, following_user_id: str, error_message: str) -> None:
+        self._conn.execute(
+            """
+            UPDATE run_followings
+            SET status = 'failed',
+                error_message = ?,
+                updated_at = ?
+            WHERE run_id = ?
+              AND following_user_id = ?
+            """,
+            (error_message, self._utc_now_str(), run_id, following_user_id),
         )
         self._conn.commit()
 
@@ -410,6 +601,16 @@ class SQLiteStorage:
                 self._utc_now_str(),
             ),
         )
+        self.logger.warning(
+            "add_run_warning run_id=%d provider=%s warning_type=%s status_code=%s user_id=%s username=%s path=%s",
+            run_id,
+            warning.provider,
+            warning.warning_type,
+            warning.status_code,
+            warning.user_id,
+            warning.username,
+            warning.api_path,
+        )
 
     def persist_batch(self, run_id: int, batch: NormalizedBatch) -> None:
         with self._conn:
@@ -420,6 +621,13 @@ class SQLiteStorage:
             for activity in batch.activities:
                 self.upsert_activity(activity)
                 self.add_run_activity(run_id, activity.id)
+        self.logger.debug(
+            "persist_batch run_id=%d users=%d tweets=%d activities=%d",
+            run_id,
+            len(batch.users),
+            len(batch.tweets),
+            len(batch.activities),
+        )
 
     def get_latest_run_id(self) -> int | None:
         row = self._conn.execute("SELECT id FROM runs ORDER BY id DESC LIMIT 1").fetchone()
@@ -465,6 +673,28 @@ class SQLiteStorage:
         ).fetchall()
         return [dict(row) for row in rows]
 
+    def count_run_activities(self, run_id: int) -> int:
+        row = self._conn.execute(
+            """
+            SELECT COUNT(*) AS c
+            FROM run_activities
+            WHERE run_id = ?
+            """,
+            (run_id,),
+        ).fetchone()
+        return int(row["c"])
+
+    def count_run_warnings(self, run_id: int) -> int:
+        row = self._conn.execute(
+            """
+            SELECT COUNT(*) AS c
+            FROM run_warnings
+            WHERE run_id = ?
+            """,
+            (run_id,),
+        ).fetchone()
+        return int(row["c"])
+
     def count_rows(self, table: str) -> int:
         if table not in {
             "users",
@@ -474,6 +704,7 @@ class SQLiteStorage:
             "runs",
             "run_activities",
             "run_warnings",
+            "run_followings",
         }:
             raise ValueError("Unsupported table name")
         row = self._conn.execute(f"SELECT COUNT(*) AS c FROM {table}").fetchone()
