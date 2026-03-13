@@ -1,7 +1,0 @@
-username = "betterestli"
-language = "en"
-db_path = "/Users/hobeter/Desktop/code/XReporter/.xreporter-local/xreporter.db"
-report_dir = "/Users/hobeter/Desktop/code/XReporter/.xreporter-local/reports"
-following_cap_default = 500
-include_replies_default = true
-api_provider = "socialdata"

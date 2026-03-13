@@ -21,6 +21,7 @@ Current version: `0.1.0` (MVI)
 ## Quick Navigation
 
 - [3-Minute Quick Start](#3-minute-quick-start)
+- [Example Reports](#example-reports)
 - [How The Report Is Organized](#how-the-report-is-organized)
 - [Technical Route At A Glance](#technical-route-at-a-glance)
 - [CLI Reference](#cli-reference)
@@ -72,6 +73,18 @@ xreporter render --latest
 ```bash
 xreporter doctor
 ```
+
+## Example Reports
+
+- English sample: [example/run_1_en.html](./example/run_1_en.html)
+- Chinese sample: [example/run_1_zh.html](./example/run_1_zh.html)
+- Source run: `betterestli`, `--last 12h`, `run_id=1`
+
+English preview:
+![English report preview](./example/run_1_en.png)
+
+Chinese preview:
+![Chinese report preview](./example/run_1_zh.png)
 
 ## How The Report Is Organized
 
