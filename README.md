@@ -2,7 +2,9 @@
 
 English | [中文](./README_cn.md)
 
-XReporter is a CLI-first pipeline for collecting activity from a target X user's followings, normalizing the data into SQLite, and generating a static HTML report.
+Ever run into this on X: the same original post keeps showing up because different followings retweet or quote it, and your timeline feels full of duplicates? Or you just cannot tell at a glance which posts are getting the most activity among people you follow.
+XReporter is built for exactly that workflow. It is a CLI-first pipeline that collects activity from a target X user's followings, normalizes it into SQLite, and generates a static HTML report.
+The idea is simple: merge and de-duplicate first, then group by original post and sort by activity count. You can scan hotspot posts quickly and drill into each following user's exact related actions (retweet, quote, reply) 🔍
 
 Current version: `0.1.0` (MVI)
 
